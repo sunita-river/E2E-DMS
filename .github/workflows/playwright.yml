@@ -1,0 +1,106 @@
+name: DMS Automation
+
+# These jobs log into the live DMS and build full reports (GSTR takes ~1 hour), so they run on
+# demand or on a schedule - not on every push.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'What to run'
+        type: choice
+        options: [all, enquiry-list, gstr, mis-check]
+        default: all
+  schedule:
+    - cron: '30 1 * * *'   # every day 07:00 IST
+
+jobs:
+  dms:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      CI: '1'
+      TZ: Asia/Kolkata                 # report dates ("yesterday") in Indian time
+      BROWSER_CHANNEL: chrome
+      CREDENTIALS_FILE: ${{ github.workspace }}/resources/credentials.json
+      GMAIL_USER: ${{ secrets.GMAIL_USER }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      GMAIL_TO: ${{ secrets.GMAIL_TO }}
+      GMAIL_CC: ${{ secrets.GMAIL_CC }}
+      SUITE: ${{ github.event.inputs.suite || 'all' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Google Chrome for Playwright
+        run: npx playwright install --with-deps chrome
+
+      - name: Write DMS credentials from the CREDENTIALS_JSON secret
+        env:
+          CREDS: ${{ secrets.CREDENTIALS_JSON }}
+        run: |
+          if [ -z "$CREDS" ]; then echo "::error::Repository secret CREDENTIALS_JSON is not set"; exit 1; fi
+          printf '%s' "$CREDS" > "$CREDENTIALS_FILE"
+          node -e "JSON.parse(require('fs').readFileSync(process.env.CREDENTIALS_FILE,'utf8'))" || { echo "::error::CREDENTIALS_JSON is not valid JSON"; exit 1; }
+
+      # The MIS check compares with the previous run's snapshot (report names + columns only,
+      # no customer data), so carry it from one CI run to the next.
+      - name: Restore previous MIS snapshot
+        uses: actions/cache/restore@v4
+        with:
+          path: MIS Reports/MIS_Report_Snapshot_*.json
+          key: mis-snapshot-${{ github.run_id }}
+          restore-keys: mis-snapshot-
+
+      - name: Enquiry List
+        if: env.SUITE == 'all' || env.SUITE == 'enquiry-list'
+        run: npx playwright test tests/enquiryListReport.spec.ts
+
+      - name: GSTR Report
+        if: ${{ !cancelled() && (env.SUITE == 'all' || env.SUITE == 'gstr') }}
+        run: npx playwright test "tests/GSTR Report.spec.ts"
+
+      - name: MIS report check
+        if: ${{ !cancelled() && (env.SUITE == 'all' || env.SUITE == 'mis-check') }}
+        run: node run_mis_check.js
+
+      - name: Save MIS snapshot for the next run
+        uses: actions/cache/save@v4
+        if: ${{ !cancelled() && (env.SUITE == 'all' || env.SUITE == 'mis-check') }}
+        with:
+          path: MIS Reports/MIS_Report_Snapshot_*.json
+          key: mis-snapshot-${{ github.run_id }}
+
+      # Reports contain customer data - keep the downloads short-lived.
+      - name: Upload GSTR Excel files
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: gstr-output
+          path: Output/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload MIS report check
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: mis-reports
+          path: MIS Reports/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload Playwright report and results
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-results
+          path: |
+            playwright-report/
+            test-results/
+            allure-results/
+          if-no-files-found: ignore
+          retention-days: 14

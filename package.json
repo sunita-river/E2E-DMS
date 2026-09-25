@@ -1,0 +1,34 @@
+{
+  "name": "e2e-dms",
+  "version": "1.0.0",
+  "description": "End-to-end Playwright automation for River DMS: Enquiry List, per-dealer GSTR sales with Post GST Discount from invoice PDFs, and a health check of all MIS reports, with Excel outputs, run-to-run comparison and email summaries; runs unattended on a server or CI/CD.",
+  "main": "run_mis_check.js",
+  "scripts": {
+    "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File setup.ps1",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:enquiry-list": "playwright test tests/enquiryListReport.spec.ts",
+    "test:gstr": "playwright test \"tests/GSTR Report.spec.ts\"",
+    "report:html": "playwright show-report",
+    "start": "node run_mis_check.js",
+    "mis": "node run_mis_check.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^26.2.0",
+    "@types/nodemailer": "^8.0.1",
+    "allure-playwright": "^3.10.2"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "nodemailer": "^9.0.5",
+    "pdf-parse": "^2.4.5",
+    "playwright": "^1.47.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-latest/xlsx-latest.tgz"
+  }
+}
