@@ -60,6 +60,32 @@ function readSavedDealerRows(dealerCode: string): (Record<string, string> & { Re
     .map((row) => ({ ...row, ReferenceNo: row.ReferenceNo ?? '' }));
 }
 
+// Post GST Discounts already read from invoice PDFs, keyed "<dealercode>|<ReferenceNo>". Once a
+// booking is invoiced its discount doesn't change, so later runs reuse it instead of opening the
+// invoice again — only new and not-yet-invoiced bookings are looked up, which is what keeps a
+// daily run short. Set GSTR_NO_CACHE=1 to ignore it and re-read every invoice (e.g. after an
+// invoice was cancelled and re-issued); fresh reads are still saved to it.
+const DISCOUNT_CACHE_FILE = path.join(OUTPUT_DIR, 'gstr-discount-cache.json');
+
+function loadDiscountCache(): Record<string, string> {
+  try {
+    return JSON.parse(fs.readFileSync(DISCOUNT_CACHE_FILE, 'utf8'));
+  } catch {
+    return {}; // no cache yet (first run) or unreadable — just look everything up
+  }
+}
+
+function saveDiscountCache(cache: Record<string, string>) {
+  try {
+    fs.mkdirSync(path.dirname(DISCOUNT_CACHE_FILE), { recursive: true });
+    fs.writeFileSync(DISCOUNT_CACHE_FILE, JSON.stringify(cache, null, 1));
+  } catch (err) {
+    console.log(`[WARN] Could not save the discount cache (${String((err as Error).message).slice(0, 80)}) — next run will re-read these invoices.`);
+  }
+}
+
+const discountCache = loadDiscountCache();
+
 function saveRowsToExcel(dealerCode: string, rows: Record<string, string>[]): string {
   const filePath = outputFilePathFor(dealerCode);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -120,21 +146,25 @@ function getField(row: Record<string, string>, ...names: string[]): string {
 // browser context's request API (shares the session's auth cookies) to get
 // the raw PDF bytes instead.
 //
-// A booking that hasn't reached the "Invoice & Insurance" stage yet has no
-// invoice, and clicking Print Invoice for it does nothing visible at all (no
-// popup, no dialog) — so a null return here means "not invoiced yet", not an
-// error, and callers should skip that reference rather than fail the run.
-async function getPrintInvoicePdfBuffer(page: Page): Promise<Buffer | null> {
-  const popupPromise = page.waitForEvent('popup', { timeout: 8000 }).catch(() => null);
+// Only called once the Print Invoice dropdown is on screen, which DMS shows only for invoiced
+// bookings — so a popup that doesn't open is a slow/stuck page (thrown, so the caller retries),
+// not "not invoiced". Treating it as "not invoiced" used to leave discounts unread whenever the
+// popup was slow, e.g. for the first few bookings of each dealer.
+async function getPrintInvoicePdfBuffer(page: Page): Promise<Buffer> {
+  const popupPromise = page.waitForEvent('popup', { timeout: 20000 }).catch(() => null);
   await page.locator('#ctl00_cpMain_cmdPrintInvoice').click({ timeout: 15000 });
   const popup = await popupPromise;
-  if (!popup) return null;
+  if (!popup) throw new Error('Print Invoice popup did not open within 20s');
 
-  // Time limits so one slow invoice can't hang the whole run (it previously sat here
-  // with no limit until the 45-minute test timeout).
-  await popup.waitForLoadState('load', { timeout: 30000 }).catch(() => {});
+  // Only the popup's address is needed — the PDF itself is fetched once below. So take the URL
+  // as soon as the popup navigates to it instead of letting the popup load the whole PDF first
+  // (that generated every invoice twice). If it lands somewhere other than the report page,
+  // fall back to waiting for it to finish loading, as before.
+  await popup.waitForURL((u) => u.href !== 'about:blank', { waitUntil: 'commit', timeout: 30000 }).catch(() => {});
+  if (!/ReportMs\.aspx/i.test(popup.url())) await popup.waitForLoadState('load', { timeout: 30000 }).catch(() => {});
   const pdfUrl = popup.url();
   await popup.close().catch(() => {});
+  if (pdfUrl === 'about:blank') throw new Error('Print Invoice popup never got an address');
 
   const response = await page.context().request.get(pdfUrl, { timeout: 60000 });
   if (!response.ok()) throw new Error(`Invoice PDF request returned HTTP ${response.status()}`);
@@ -160,26 +190,61 @@ type ReportRow = Record<string, string> & { ReferenceNo: string };
 // invoice PDF. Returns the discount, or null when the booking has no invoice yet. Throws on
 // anything unexpected so the caller can retry once and then warn.
 async function lookUpPostGstDiscount(page: Page, referenceNo: string): Promise<string | null> {
-  await page.fill('#ctl00_cpMain_code', referenceNo);
-  // Wait for the search postback to come back before looking at the page — otherwise the
+  await page.fill('#ctl00_cpMain_code', referenceNo, { timeout: 15000 });
+  // Wait for the search postback to reload the page before looking at it — otherwise the
   // previous booking's Print Invoice button can still be on screen and get read by mistake.
+  // This waits for the page itself to change, not a response from a particular URL: the search
+  // used to post to ProductSaleWorkSheet.aspx but now posts to CustomerCenter.aspx (then
+  // redirects), and matching on the URL made every lookup time out when that changed.
+  // The click has its own shorter limit so a Show button covered by a leftover dropdown/popup
+  // fails with Playwright's "element intercepts pointer events" message, not a bare 60s timeout.
   await Promise.all([
-    page.waitForResponse((r) => r.request().method() === 'POST' && /ProductSaleWorkSheet/i.test(r.url()), { timeout: 60000 }),
-    page.click('#ctl00_cpMain_cmdShow'),
+    page.waitForEvent('framenavigated', { predicate: (f) => f === page.mainFrame(), timeout: 60000 }),
+    page.click('#ctl00_cpMain_cmdShow', { timeout: 15000 }),
   ]);
   await page.waitForLoadState('load', { timeout: 60000 });
 
   // A booking that hasn't reached the "Invoice & Insurance" stage yet (still at
   // Booking/Payment/Pre-Invoice) has no invoice, so this control isn't rendered at all.
+  // Give it a few seconds to appear rather than checking the instant the page loads.
   const printDropdownToggle = page.locator('#ctl00_cpMain_PrintInvoiceFormat');
-  if (!(await printDropdownToggle.isVisible().catch(() => false))) return null;
+  if (!(await printDropdownToggle.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false))) return null;
 
   await printDropdownToggle.scrollIntoViewIfNeeded({ timeout: 15000 });
   await printDropdownToggle.click({ timeout: 15000 });
   const pdfBuffer = await getPrintInvoicePdfBuffer(page);
-  if (!pdfBuffer) return null;
   return (await withTimeout(findValueInInvoicePdf(pdfBuffer, 'Post GST Discount'), 60000, 'Reading the invoice PDF')) || '0';
 }
+
+// Closes whatever one booking's lookup can leave behind — invoice popups/tabs and the open
+// Print Invoice dropdown — so it can't cover the Show button for the next booking.
+async function closeLeftovers(page: Page) {
+  for (const other of page.context().pages()) {
+    if (other !== page) await other.close().catch(() => {});
+  }
+  await page.keyboard.press('Escape').catch(() => {});
+}
+
+// Opens the Product Sale Work Sheet search fresh. DMS can log the user out partway through a
+// long run (the search page then redirects to the login page), so sign in again when that happens.
+async function openProductSaleWorkSheet(page: Page, dealer: DealerCredentials) {
+  await closeLeftovers(page);
+  const url = 'https://rivermobility.gaindms.com/Product/ProductSaleWorkSheet.aspx';
+  await page.goto(url, { timeout: 60000 });
+  if (await page.getByRole('button', { name: 'Sign In' }).isVisible().catch(() => false)) {
+    console.log(`[STEP] Dealer ${dealer.dealercode}: DMS session expired — signing in again...`);
+    const loginPage = new LoginPage(page);
+    await loginPage.login(dealer);
+    await loginPage.verifyDashboard();
+    await page.goto(url, { timeout: 60000 });
+  }
+  await page.locator('table#ctl00_cpMain_grdMain > tbody > tr:nth-of-type(2) > td:nth-of-type(2) > a').click({ timeout: 30000 });
+  await page.locator('#ctl00_cpMain_code').waitFor({ state: 'visible', timeout: 30000 });
+}
+
+// After this many bookings in a row fail even with a fresh page, the dealer is failed (and
+// retried at the end of the run) instead of working through hundreds of doomed lookups.
+const MAX_CONSECUTIVE_LOOKUP_FAILURES = 5;
 
 // Leaves the browser ready for the next dealer whatever state this one ended in: closes any
 // report/invoice tabs left open, logs out if possible, and clears the session cookies so the
@@ -301,42 +366,62 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
   const productSaleRows = allRowsWithDiscount.filter((row) => getField(row, 'ReportOn') === 'Product Sale' && row.ReferenceNo);
   console.log(`[STEP] Reference numbers for ReportOn = Product Sale (${productSaleRows.length}):`, productSaleRows.map((r) => r.ReferenceNo));
 
-  if (productSaleRows.length) {
+  // Discounts read on an earlier run are filled in straight away; only the rest need an invoice.
+  const cacheKey = (row: ReportRow) => `${dealer.dealercode}|${row.ReferenceNo}`;
+  const rowsToLookUp = productSaleRows.filter((row) => {
+    const cached = process.env.GSTR_NO_CACHE ? undefined : discountCache[cacheKey(row)];
+    if (cached === undefined) return true;
+    row.DiscountAmount = cached;
+    return false;
+  });
+  console.log(`[STEP] Post GST Discount: ${productSaleRows.length - rowsToLookUp.length} reused from earlier runs, ${rowsToLookUp.length} to look up.`);
+
+  if (rowsToLookUp.length) {
     console.log('[STEP] Navigating to Product Sale Work Sheet...');
-    await page.goto('https://rivermobility.gaindms.com/Product/ProductSaleWorkSheet.aspx');
-    await page.locator('table#ctl00_cpMain_grdMain > tbody > tr:nth-of-type(2) > td:nth-of-type(2) > a').click();
-    await page.locator('#ctl00_cpMain_code').waitFor({ state: 'visible', timeout: 30000 });
+    await openProductSaleWorkSheet(page, dealer);
   }
 
   const skipped: string[] = [];
-  for (const row of productSaleRows) {
+  let consecutiveFailures = 0;
+  for (const row of rowsToLookUp) {
     console.log(`[STEP] Looking up Post GST Discount for reference ${row.ReferenceNo}...`);
     let discount: string | null = null;
     let lastError: unknown = null;
     // One retry: the failures seen so far (error page instead of PDF, slow postback) were
-    // temporary and worked on the next attempt.
+    // temporary and worked on the next attempt. The retry starts from a freshly opened search
+    // page (signing in again if needed) — retrying on the same stuck page just fails again.
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
+        if (attempt === 2) await openProductSaleWorkSheet(page, dealer);
         discount = await lookUpPostGstDiscount(page, row.ReferenceNo);
         lastError = null;
         break;
       } catch (err) {
         lastError = err;
-        for (const other of page.context().pages()) if (other !== page) await other.close().catch(() => {});
-        if (attempt === 1) console.log(`[STEP] Reference ${row.ReferenceNo}: attempt 1 failed (${oneLine(err)}) — retrying once...`);
+        if (attempt === 1) console.log(`[STEP] Reference ${row.ReferenceNo}: attempt 1 failed (${oneLine(err)}) — reopening the search page and retrying once...`);
       }
     }
+    await closeLeftovers(page);
     if (lastError) {
       // Leave the report's own DiscountAmount for this row and carry on with the next one.
       console.log(`[WARN] Reference ${row.ReferenceNo}: discount could not be read after 2 attempts — left as in the report (${oneLine(lastError)}).`);
       skipped.push(row.ReferenceNo);
+      if (++consecutiveFailures >= MAX_CONSECUTIVE_LOOKUP_FAILURES) {
+        throw new Error(`Post GST Discount lookup failed for ${consecutiveFailures} bookings in a row (last: ${oneLine(lastError)}) — ` +
+          `DMS looks stuck, stopping this dealer so it is retried at the end.`);
+      }
+      // Don't carry a possibly stuck page into the next booking.
+      await openProductSaleWorkSheet(page, dealer).catch((err) => console.log(`[WARN] Could not reopen the Product Sale Work Sheet (${oneLine(err)}).`));
       continue;
     }
+    consecutiveFailures = 0;
     if (discount === null) {
       console.log(`[STEP] Reference ${row.ReferenceNo}: no Print Invoice option yet (not invoiced) — skipping.`);
       continue;
     }
     row.DiscountAmount = discount;
+    discountCache[cacheKey(row)] = discount;
+    saveDiscountCache(discountCache); // after every read, so a run that dies midway still keeps them
     console.log(`[STEP] Reference ${row.ReferenceNo}: Post GST Discount = ${row.DiscountAmount}`);
   }
   if (skipped.length) {
