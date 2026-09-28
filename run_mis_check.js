@@ -407,12 +407,22 @@ async function sendSummaryEmail({ rows, changes, previousName, from, to, minutes
         ['Added', c => c.addedCols.join(', ')], ['Removed', c => c.removedCols.join(', ')]]);
   }
 
+  // Where the run came from, so GitHub and local-PC emails can be told apart in the inbox.
+  const runUrl = process.env.GITHUB_ACTIONS
+    ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+    : '';
+  const sourceTag = runUrl ? 'GitHub' : 'Local';
+  const sourceHtml = runUrl
+    ? `Run from GitHub Actions - <a href="${h(runUrl)}" style="color:#fff;">open this run</a>`
+    : `Run from local PC (${h(require('os').hostname())})`;
+
   const html = `
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:24px 0;"><tr><td align="center">
   <table width="760" cellpadding="0" cellspacing="0" style="max-width:760px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);">
     <tr><td style="background:linear-gradient(90deg,#0b5394,#1a73e8);background-color:#0b5394;padding:26px 24px;${FONT}color:#fff;">
       <div style="font-size:22px;font-weight:700;">River DMS - MIS Report Check</div>
       <div style="font-size:13px;opacity:.9;margin-top:6px;">${h(new Date().toLocaleString('en-IN'))} &nbsp;|&nbsp; Report dates ${h(from)} to ${h(to)} &nbsp;|&nbsp; ${minutes} min</div>
+      <div style="font-size:13px;opacity:.9;margin-top:4px;">${sourceHtml}</div>
     </td></tr>
     <tr><td style="padding:18px 18px 4px;background:#f8f9fa;"><table width="100%" cellpadding="0" cellspacing="0"><tr>
       ${card('Reports checked', total, '#1a73e8')}${card('Passed', ok, '#188038')}${card('Failed', failed, '#d93025')}${card('Blank / no data', count('BLANK / NO DATA'), '#f9ab00')}
@@ -439,8 +449,8 @@ async function sendSummaryEmail({ rows, changes, previousName, from, to, minutes
   const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
   await transporter.sendMail({
     from: user, to: rcpt,
-    subject: `MIS Report Check - ${ok}/${total} passed, ${failed} failed${changes ? ` - ${changes.added.length} added / ${changes.removed.length} removed` : ''} - ${new Date().toLocaleDateString('en-IN')}`,
-    text: `MIS Report Check: ${total} reports, ${ok} passed, ${failed} failed, ${count('BLANK / NO DATA')} blank. Full details in the attached Excel file.`,
+    subject: `MIS Report Check [${sourceTag}] - ${ok}/${total} passed, ${failed} failed${changes ? ` - ${changes.added.length} added / ${changes.removed.length} removed` : ''} - ${new Date().toLocaleDateString('en-IN')}`,
+    text: `MIS Report Check: ${total} reports, ${ok} passed, ${failed} failed, ${count('BLANK / NO DATA')} blank. Full details in the attached Excel file.\n${runUrl ? `Run from: GitHub Actions (${runUrl})` : `Run from: local PC (${require('os').hostname()})`}`,
     html,
     attachments: attachments.map(p => ({ filename: path.basename(p), path: p })),
   });

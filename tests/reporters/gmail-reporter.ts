@@ -1,5 +1,6 @@
 import type { Reporter, TestCase, TestResult, FullResult } from '@playwright/test/reporter';
 import fs from 'fs';
+import os from 'os';
 import nodemailer from 'nodemailer';
 
 type CollectedCsvReport = { filename: string; content: string };
@@ -126,6 +127,15 @@ export default class GmailReporter implements Reporter {
 
     const runDate = new Date().toISOString().slice(0, 10);
     const summary = `Passed: ${this.passed}, Failed: ${this.failed}, Skipped: ${this.skipped}`;
+    // Says where the run came from, so GitHub and local-PC emails can be told apart in the inbox.
+    const runUrl = process.env.GITHUB_ACTIONS
+      ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+      : '';
+    const sourceTag = runUrl ? 'GitHub' : 'Local';
+    const sourceText = runUrl ? `Run from: GitHub Actions (${runUrl})` : `Run from: local PC (${os.hostname()})`;
+    const sourceHtml = runUrl
+      ? `Run from: <b>GitHub Actions</b> - <a href="${runUrl}">open this run</a>`
+      : `Run from: <b>local PC</b> (${escapeHtml(os.hostname())})`;
     const tablesHtml = this.csvReports.map((r) => csvToHtmlTable(r.filename, r.content)).join('<br/>');
 
     try {
@@ -134,11 +144,12 @@ export default class GmailReporter implements Reporter {
         to,
         // Optional comma-separated CC list from GMAIL_CC (kept out of the code/Git).
         ...(process.env.GMAIL_CC ? { cc: process.env.GMAIL_CC } : {}),
-        subject: `DMS Automation Report - ${result.status} - ${runDate}`,
-        text: `Test run finished with status: ${result.status}\n${summary}`,
+        subject: `DMS Automation Report [${sourceTag}] - ${result.status} - ${runDate}`,
+        text: `Test run finished with status: ${result.status}\n${summary}\n${sourceText}`,
         html: `
           <p style="font-family:sans-serif;">Test run finished with status: <b>${escapeHtml(result.status)}</b></p>
           <p style="font-family:sans-serif;">${escapeHtml(summary)}</p>
+          <p style="font-family:sans-serif;">${sourceHtml}</p>
           ${tablesHtml}
         `,
       });
