@@ -107,13 +107,17 @@ All optional. See `.env.example`.
 
 `.github/workflows/playwright.yml` runs on GitHub Actions **on demand** (Actions → *DMS Automation* → *Run workflow*, then choose `all`, `enquiry-list`, `gstr` or `mis-check`) and **daily at 07:00 IST**. It runs headless on Google Chrome in Indian time, and keeps the reports as run downloads for 7 days.
 
-Add these under **Settings → Secrets and variables → Actions**:
+Add these under **Settings → Secrets and variables → Actions → Secrets tab → New repository secret** (one secret per row; no variables are needed):
 
-| Secret | Value |
-|---|---|
-| `CREDENTIALS_JSON` | The full contents of your `resources/credentials.json` |
-| `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `GMAIL_TO` | As in `.env` |
-| `GMAIL_CC` | Optional |
+| Secret | Required | Value |
+|---|---|---|
+| `CREDENTIALS_JSON` | Yes | The whole of `resources/credentials.json`, pasted as-is (starts with `{`). CI uses `dealervalidUser` (Enquiry List, MIS check) and `dealerUsers` (GSTR); `PIDUsers` can stay in or be left out, as PDI doesn't run on CI |
+| `GMAIL_USER` | For email | The Gmail address the reports are sent from |
+| `GMAIL_APP_PASSWORD` | For email | That account's 16-character [Gmail App Password](https://myaccount.google.com/apppasswords) (not its login password) |
+| `GMAIL_TO` | For email | Who receives the reports |
+| `GMAIL_CC` | No | Comma-separated CC list for the Playwright run report |
+
+Then run it once: **Actions → DMS Automation → Run workflow**. A missing or broken `CREDENTIALS_JSON` stops the run at the first step with a clear error. PDI isn't part of CI on purpose: it changes live DMS records and needs the VIN sheet, so it's run by hand.
 
 The GitHub-hosted runner must be able to reach `rivermobility.gaindms.com`. If it can't, use a self-hosted runner inside the company network.
 
@@ -136,6 +140,7 @@ run_mis_check.js                MIS report checker
 playwright.config.ts            Browser, timeouts, reporters
 resources/credentials.example.json
 Test Cases/                     Test case workbook (executed 25-Sep-2026; PDI 28-Sep-2026)
+docs/Confluence.md              Team-facing overview, ready to paste into Confluence
 setup.ps1 / setup.bat           One-click setup;  run-tests.bat = setup + run all tests
 run-pdi.bat                     Double-click PDI run (asks Dry run or Save)
 ```
