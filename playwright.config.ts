@@ -71,38 +71,13 @@ export default defineConfig({
   },
 
   /* Configure projects for Google Chrome only */
+  // Every spec logs in itself, so there is no setup project or saved login state.
   projects: [
     {
-      name: 'setup',
-      testMatch: /.*\.setup\.ts/,
-      use: {
-        ...devices['Desktop Chrome'],
-        channel: browserChannel,
-        viewport: null,
-        deviceScaleFactor: undefined,
-      },
-    },
-    {
-      // Manual, human-driven passkey enrollment (see tests/enrollPasskey.manual.ts).
-      // Deliberately not a dependency of any other project — it pauses for
-      // interactive input and must only run when explicitly requested via
-      // `--project=enroll-passkey`, never as part of a normal/CI test run.
-      name: 'enroll-passkey',
-      testMatch: /enrollPasskey\.manual\.ts/,
-      use: {
-        ...devices['Desktop Chrome'],
-        channel: browserChannel,
-        viewport: null,
-        deviceScaleFactor: undefined,
-      },
-    },
-    {
       name: 'Google Chrome',
-      dependencies: ['setup'],
       use: {
         ...devices['Desktop Chrome'],
         channel: browserChannel, // Installed Google Chrome (or Edge via BROWSER_CHANNEL) instead of bundled Chromium
-        storageState: 'playwright/.auth/salesforce.json',
         viewport: null,
         deviceScaleFactor: undefined,
       },
