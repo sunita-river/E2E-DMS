@@ -57,6 +57,17 @@ jobs:
           key: mis-snapshot-${{ github.run_id }}
           restore-keys: mis-snapshot-
 
+      # Post GST Discounts already read from invoice PDFs (dealer + booking no. -> discount), so
+      # each GSTR run only opens the invoices of new or not-yet-invoiced bookings instead of all
+      # of them (~1 hour). Saved again after the GSTR step, even if it failed partway.
+      - name: Restore GSTR discount cache
+        if: env.SUITE == 'all' || env.SUITE == 'gstr'
+        uses: actions/cache/restore@v4
+        with:
+          path: Output/gstr-discount-cache.json
+          key: gstr-discount-cache-${{ github.run_id }}
+          restore-keys: gstr-discount-cache-
+
       - name: Enquiry List
         if: env.SUITE == 'all' || env.SUITE == 'enquiry-list'
         run: npx playwright test tests/enquiryListReport.spec.ts
@@ -64,6 +75,13 @@ jobs:
       - name: GSTR Report
         if: ${{ !cancelled() && (env.SUITE == 'all' || env.SUITE == 'gstr') }}
         run: npx playwright test "tests/GSTR Report.spec.ts"
+
+      - name: Save GSTR discount cache for the next run
+        uses: actions/cache/save@v4
+        if: ${{ !cancelled() && (env.SUITE == 'all' || env.SUITE == 'gstr') && hashFiles('Output/gstr-discount-cache.json') != '' }}
+        with:
+          path: Output/gstr-discount-cache.json
+          key: gstr-discount-cache-${{ github.run_id }}
 
       - name: MIS report check
         if: ${{ !cancelled() && (env.SUITE == 'all' || env.SUITE == 'mis-check') }}

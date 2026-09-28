@@ -48,7 +48,7 @@ const CONFIG = {
     chassisNo: 'P7BAAAXX1KS016088',  // Vehicle History
     sparePartCode: 'R106020383',     // Movement Analysis (only filled when the DMS asks for a spare part code)
     // Dead Stock Analysis (Spares, MFR Spares, Accessories) - any sensible values work
-    purchaseDateDaysAgo: 3,          // Purchase Date = today - 3
+    purchaseDateDaysAgo: 1,          // Purchase Date = today - 1
     workshopConsideredDays: '6',
     counterSaleConsideredDays: '9',
     // Month + Year fields (Leakage And Redemption Summary, Spares FSN Analysis) use the current month and year
