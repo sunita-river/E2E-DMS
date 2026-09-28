@@ -9,7 +9,19 @@ import * as path from 'node:path';
 const credentials = JSON.parse(fs.readFileSync(
   process.env.CREDENTIALS_FILE || path.join(__dirname, '..', 'resources', 'credentials.json'), 'utf8'));
 
-const todayDay = String(new Date().getDate());
+// Report range: 7 September 2026 to today, unless ENQ_FROM / ENQ_TO (dd-mm-yyyy) are set.
+function parseDateEnv(name: string, fallback: Date): Date {
+  const v = process.env[name];
+  if (!v) return fallback;
+  const m = v.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (!m) throw new Error(`${name} must be dd-mm-yyyy (got "${v}")`);
+  return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+}
+const REPORT_FROM = parseDateEnv('ENQ_FROM', new Date(2026, 8, 7)); // months are 0-based: 8 = September
+const REPORT_TO = parseDateEnv('ENQ_TO', new Date());
+if (REPORT_FROM > REPORT_TO) throw new Error('ENQ_FROM is after ENQ_TO.');
+// Date-picker arguments: day, full month name, year.
+const pickerArgs = (d: Date): [string, string, number] => [String(d.getDate()), d.toLocaleString('en-US', { month: 'long' }), d.getFullYear()];
 
 // Formats a "DD-MM-YYYY ..." grid date as e.g. "10th Aug".
 function formatDateOrdinal(raw: string): string {
@@ -204,8 +216,8 @@ test.describe('MFR Vehicles Reports - Enquiry List', () => {
 
     // --- Enquiry List ---
     await enquiryListReportPage.navigateToEnquiryList();
-    await enquiryListReportPage.setFromDate('7', 'September', 2026);
-    await enquiryListReportPage.setToDate(todayDay);
+    await enquiryListReportPage.setFromDate(...pickerArgs(REPORT_FROM));
+    await enquiryListReportPage.setToDate(...pickerArgs(REPORT_TO));
 
     const enquiryReportPage = await enquiryListReportPage.viewReport();
     await enquiryListReportPage.openColumnSelector(enquiryReportPage);
@@ -229,8 +241,8 @@ test.describe('MFR Vehicles Reports - Enquiry List', () => {
 
     // --- Product-wise Sales Details (continues in the same session, no re-login) ---
     await salesDetailsReportPage.navigateToProductWiseSalesDetails();
-    await salesDetailsReportPage.setFromDate('7', 'September', 2026);
-    await salesDetailsReportPage.setToDate(todayDay);
+    await salesDetailsReportPage.setFromDate(...pickerArgs(REPORT_FROM));
+    await salesDetailsReportPage.setToDate(...pickerArgs(REPORT_TO));
 
     const salesReportPage = await salesDetailsReportPage.viewReport();
     await salesDetailsReportPage.openColumnSelector(salesReportPage);
@@ -255,8 +267,8 @@ test.describe('MFR Vehicles Reports - Enquiry List', () => {
     await salesDetailsReportPage.page.waitForLoadState('load');
 
     await salesDetailsReportPage.navigateToProductWiseSalesDetails();
-    await salesDetailsReportPage.setFromDate('7', 'September', 2026);
-    await salesDetailsReportPage.setToDate(todayDay);
+    await salesDetailsReportPage.setFromDate(...pickerArgs(REPORT_FROM));
+    await salesDetailsReportPage.setToDate(...pickerArgs(REPORT_TO));
     await salesDetailsReportPage.setDateType('B');
     const bookingReportPage = await salesDetailsReportPage.viewReport();
     await salesDetailsReportPage.openColumnSelector(bookingReportPage);

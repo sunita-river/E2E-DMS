@@ -62,7 +62,7 @@ After each Playwright run, `tests/reporters/gmail-reporter.ts` emails the pass/f
 
 ### PDI details
 - **Double-click `run-pdi.bat`** to choose Dry run or Save; the npm commands above do the same. In PowerShell use `npm.cmd` if scripts are blocked.
-- **Checked:** the rows the PDI page shows (Top N = 25 by default). After Save, each chassis is opened again to confirm the DMS kept the values; a timeout triggers a fresh login and one retry.
+- **Checked:** every vehicle on the PDI page — the spec raises the page's "Top" box (25 by default) to `PDI_TOP` (500) and clicks Show first, and warns if the list is full. After Save, each chassis is opened again to confirm the DMS kept the values; a timeout triggers a fresh login and one retry.
 - **Pass / fail:** the run passes only when every blank chassis is updated and no dealer fails. Only a passing run emails the report (to `GMAIL_TO`, CC `PDI_CC`); a failed run is red and sends no report — see the dashboard and Excel in `Output/`. Dry-run reports go to `GMAIL_TO` only.
 - **Report:** per-dealer summary in the email body; `PDI_Dashboard.html` attached (open in a browser to filter by dealer or outcome, search, sort) with the Excel.
 
@@ -86,6 +86,8 @@ All optional. See `.env.example`.
 | `GSTR_FROM`, `GSTR_TO` | GSTR | Report dates (dd-mm-yyyy) |
 | `GSTR_OUTPUT_DIR` | GSTR | Output folder (default `Output/`) |
 | `GSTR_RERUN_ALL` | GSTR | `1` = don't reuse saved dealers |
+| `ENQ_FROM`, `ENQ_TO` | Enquiry List | Report dates (dd-mm-yyyy); default 07-09-2026 to today |
+| `PDI_TOP` | PDI | Vehicles to list on the PDI page (default 500) |
 | `PDI_DEALER` | PDI | Only these dealers, comma-separated (default: all `PIDUsers`) |
 | `PDI_DRY_RUN` | PDI | `1` = fill the form but don't Save (set by `test:pdi:dry`) |
 | `PDI_VIN_FILE` | PDI | VIN Details workbook (default `resources/VIN Details (1).xlsx`) |

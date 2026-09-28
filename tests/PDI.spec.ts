@@ -14,6 +14,7 @@ import { sendPdiReport, problemsOf, FailedDealer } from './utils/pdiReport';
 //   PDI_DEALER    only these dealer codes, comma-separated, e.g. 332009,332008 (default: all PIDUsers)
 //   PDI_VIN_FILE  VIN Details workbook (default: resources/VIN Details (1).xlsx)
 //   PDI_DRY_RUN   1 = fill the form but don't click Save (for a first check)
+//   PDI_TOP       vehicles to list on the PDI page (default 500; the page itself shows 25)
 //   PDI_SEND_EMAIL 0 = don't email the per-dealer report (it uses the GMAIL_* settings in .env)
 const CREDENTIALS_FILE = process.env.CREDENTIALS_FILE || path.join(__dirname, '..', 'resources', 'credentials.json');
 const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
@@ -21,6 +22,8 @@ const VIN_FILE = process.env.PDI_VIN_FILE || path.join(__dirname, '..', 'resourc
 const OUTPUT_DIR = process.env.GSTR_OUTPUT_DIR || path.join(process.cwd(), 'Output');
 const DRY_RUN = process.env.PDI_DRY_RUN === '1';
 const EDIT_REASON = 'Details updated';
+const PDI_TOP = Number(process.env.PDI_TOP || 500); // rows to list on the PDI page (the page's own default is 25)
+if (!Number.isInteger(PDI_TOP) || PDI_TOP < 1) throw new Error(`PDI_TOP must be a whole number above 0 (got "${process.env.PDI_TOP}")`);
 
 const PDI_URL = 'Product/PDIStockCheckingMain.aspx';
 const MODIFY_VEHICLE_URL = 'Common/ChangeChassisNo.aspx';
@@ -139,8 +142,19 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
   await page.locator('a[href$="PDIStockCheckingMain.aspx"]').first().click();
   await page.waitForURL(new RegExp(PDI_URL.replace('.', '\\.'), 'i'), { timeout: 60000 })
     .catch(() => page.goto(PDI_URL)); // menu hidden/collapsed for some users — go direct
-  await page.locator("input[id^='ctl00_cpMain_grdMain_'][id$='_ChassisNo']").first().waitFor({ timeout: 60000 })
-    .catch(() => console.log('[STEP] PDI grid is empty.'));
+  const chassisCells = page.locator("input[id^='ctl00_cpMain_grdMain_'][id$='_ChassisNo']");
+  await chassisCells.first().waitFor({ timeout: 60000 }).catch(() => {});
+
+  // The page lists only the top 25 vehicles by default; raise "Top" and click Show so every
+  // vehicle waiting for PDI is checked. (Show is the page's own refresh; press no Enter here —
+  // it posts the form without a command and empties the grid.)
+  await page.locator('#ctl00_cpMain_Topn').fill(String(PDI_TOP));
+  await page.locator('#ctl00_cpMain_cmdShow').click();
+  await page.waitForLoadState('domcontentloaded');
+  await chassisCells.first().waitFor({ timeout: 60000 }).catch(() => console.log('[STEP] PDI grid is empty.'));
+  const gridRows = await chassisCells.count();
+  console.log(`[STEP] PDI grid: ${gridRows} vehicle(s) (Top ${PDI_TOP})`);
+  if (gridRows >= PDI_TOP) console.log(`[WARN] The grid is full at Top ${PDI_TOP} — there may be more vehicles; raise PDI_TOP.`);
 
   const blankRows = await readBlankPdiRows(page);
   console.log(`[STEP] ${blankRows.length} PDI row(s) with blank fields:`);
@@ -313,12 +327,14 @@ test.describe('PDI', () => {
         continue;
       }
       const mine = results.filter((r) => r.Dealer === code);
-      const updated = mine.filter((r) => r.Status!.startsWith('Updated'));
-      console.log(`\n[RESULT] Dealer ${code}: ${updated.length} of ${mine.length} chassis updated${DRY_RUN ? ' (dry run — nothing saved)' : ''}`);
+      // In a dry run "done" means filled (nothing is saved).
+      const done = (r: ResultRow) => r.Status!.startsWith(DRY_RUN ? 'Dry run' : 'Updated');
+      const updated = mine.filter(done);
+      console.log(`\n[RESULT] Dealer ${code}: ${updated.length} of ${mine.length} chassis ${DRY_RUN ? 'filled (dry run — nothing saved)' : 'updated'}`);
       updated.forEach((r) => console.log(`   ${r.ChassisNo}  Engine ${r.EngineNo}, Battery ${r.BatteryDetails}, Charger ${r.VehicleChargerNo}`));
-      const notUpdated = mine.filter((r) => !r.Status!.startsWith('Updated'));
+      const notUpdated = mine.filter((r) => !done(r));
       if (notUpdated.length) {
-        console.log('   NOT updated:');
+        console.log(`   NOT ${DRY_RUN ? 'filled' : 'updated'}:`);
         notUpdated.forEach((r) => console.log(`   ${r.ChassisNo}  ${r.Status}`));
       }
     }
