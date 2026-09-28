@@ -1,7 +1,7 @@
 {
   "name": "e2e-dms",
   "version": "1.0.0",
-  "description": "End-to-end Playwright automation for River DMS: Enquiry List, per-dealer GSTR sales with Post GST Discount from invoice PDFs, and a health check of all MIS reports, with Excel outputs, run-to-run comparison and email summaries; runs unattended on a server or CI/CD.",
+  "description": "End-to-end Playwright automation for River DMS: Enquiry List, per-dealer GSTR sales with Post GST Discount from invoice PDFs, PDI blank vehicle details (Engine / Battery / Charger) filled from the VIN sheet, and a health check of all MIS reports, with Excel outputs, run-to-run comparison and email summaries; runs unattended on a server or CI/CD.",
   "main": "run_mis_check.js",
   "scripts": {
     "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File setup.ps1",
@@ -9,7 +9,10 @@
     "test:headed": "playwright test --headed",
     "test:enquiry-list": "playwright test tests/enquiryListReport.spec.ts",
     "test:gstr": "playwright test \"tests/GSTR Report.spec.ts\"",
-    "report:html": "playwright show-report",
+    "test:pdi:dry": "set PDI_RUN=1&& set PDI_DRY_RUN=1&& playwright test tests/PDI.spec.ts --headed",
+    "test:pdi": "set PDI_RUN=1&& set PDI_DRY_RUN=&& playwright test tests/PDI.spec.ts --headed",
+    "report:pdi-daily": "set PDI_RUN=1&& playwright test tests/PDIDailyReport.spec.ts --reporter=line",
+    "report:html":"playwright show-report",
     "start": "node run_mis_check.js",
     "mis": "node run_mis_check.js"
   },
