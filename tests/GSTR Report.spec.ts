@@ -146,15 +146,17 @@ function getField(row: Record<string, string>, ...names: string[]): string {
 // browser context's request API (shares the session's auth cookies) to get
 // the raw PDF bytes instead.
 //
-// Only called once the Print Invoice dropdown is on screen, which DMS shows only for invoiced
-// bookings — so a popup that doesn't open is a slow/stuck page (thrown, so the caller retries),
-// not "not invoiced". Treating it as "not invoiced" used to leave discounts unread whenever the
-// popup was slow, e.g. for the first few bookings of each dealer.
-async function getPrintInvoicePdfBuffer(page: Page): Promise<Buffer> {
-  const popupPromise = page.waitForEvent('popup', { timeout: 20000 }).catch(() => null);
+// A booking that hasn't reached the "Invoice & Insurance" stage yet has no
+// invoice, and clicking Print Invoice for it does nothing visible at all (no
+// popup, no dialog) — even though the Print Invoice dropdown itself is shown
+// (confirmed on 00184074: no popup on either attempt, even with 20s and a fresh
+// page). So a null return here means "not invoiced yet", not an error, and
+// callers should skip that reference rather than fail the run.
+async function getPrintInvoicePdfBuffer(page: Page): Promise<Buffer | null> {
+  const popupPromise = page.waitForEvent('popup', { timeout: 8000 }).catch(() => null);
   await page.locator('#ctl00_cpMain_cmdPrintInvoice').click({ timeout: 15000 });
   const popup = await popupPromise;
-  if (!popup) throw new Error('Print Invoice popup did not open within 20s');
+  if (!popup) return null;
 
   // Only the popup's address is needed — the PDF itself is fetched once below. So take the URL
   // as soon as the popup navigates to it instead of letting the popup load the whole PDF first
@@ -213,6 +215,7 @@ async function lookUpPostGstDiscount(page: Page, referenceNo: string): Promise<s
   await printDropdownToggle.scrollIntoViewIfNeeded({ timeout: 15000 });
   await printDropdownToggle.click({ timeout: 15000 });
   const pdfBuffer = await getPrintInvoicePdfBuffer(page);
+  if (!pdfBuffer) return null;
   return (await withTimeout(findValueInInvoicePdf(pdfBuffer, 'Post GST Discount'), 60000, 'Reading the invoice PDF')) || '0';
 }
 
