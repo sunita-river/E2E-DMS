@@ -410,6 +410,7 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
       console.log(`[WARN] Reference ${row.ReferenceNo}: discount could not be read after 2 attempts — left as in the report (${oneLine(lastError)}).`);
       skipped.push(row.ReferenceNo);
       if (++consecutiveFailures >= MAX_CONSECUTIVE_LOOKUP_FAILURES) {
+        saveDiscountCache(discountCache); // keep what this dealer did read before giving up
         throw new Error(`Post GST Discount lookup failed for ${consecutiveFailures} bookings in a row (last: ${oneLine(lastError)}) — ` +
           `DMS looks stuck, stopping this dealer so it is retried at the end.`);
       }
@@ -424,9 +425,10 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
     }
     row.DiscountAmount = discount;
     discountCache[cacheKey(row)] = discount;
-    saveDiscountCache(discountCache); // after every read, so a run that dies midway still keeps them
     console.log(`[STEP] Reference ${row.ReferenceNo}: Post GST Discount = ${row.DiscountAmount}`);
   }
+  // Saved once per dealer rather than after every booking.
+  if (rowsToLookUp.length) saveDiscountCache(discountCache);
   if (skipped.length) {
     test.info().annotations.push({
       type: 'warning',
