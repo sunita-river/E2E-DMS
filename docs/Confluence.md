@@ -15,7 +15,7 @@ Automated checks and data fixes for **River DMS** (rivermobility.gaindms.com), b
 | Enquiry List | Dealer login → Enquiry List, then Product-wise Sales Details (Invoice and Booking date types) → combined Enquiry / Invoice / Booking summary by date and dealer | No | Summary tables and a CSV |
 | GSTR Report | For every dealer: GSTR ProductWise Sales Details plus the Post GST Discount read from each Product Sale invoice PDF | No | One Excel per dealer + a MasterData Excel |
 | MIS Report Check | Opens every report under every MIS page (~274), classifies each (OK / server error / timeout / blank / needs input) and compares with the previous run | No | Formatted Excel + email summary |
-| PDI Vehicle Details | For every PDI dealer: finds vehicles in WORKSHOP → PDI with a blank field and fills Engine / Battery / Charger from the VIN Details sheet in Settings → Admin → Modify vehicle details | **Yes** | Excel + interactive dashboard, emailed per dealer |
+| PDI Vehicle Details | For every PDI dealer: finds vehicles in WORKSHOP → PDI with a blank field and fills Engine / Battery / Charger from the VIN Details sheet in Settings → Admin → Modify vehicle details | **Yes** | Excel + interactive dashboard, one combined email per run |
 
 ---
 
@@ -25,16 +25,16 @@ Automated checks and data fixes for **River DMS** (rivermobility.gaindms.com), b
 Vehicles waiting for PDI can have a blank Engine No (Motor No), Battery or Charger number. The correct values are in the manufacturer's VIN Details sheet. Filling them in by hand is slow, so the automation does it for every dealer.
 
 ### What it does, step by step
-1. Logs in as each dealer listed under `PIDUsers` in the credentials file.
+1. Logs in as each dealer in `PIDDealerCodes` (using the shared `PIDLogin`) and `PIDUsers` in the credentials file.
 2. Opens **WORKSHOP → PDI**, raises the page's "Top" box from 25 to 500 and clicks Show, so every vehicle is listed.
 3. Finds every vehicle with a blank field and saves its chassis number.
 4. Opens **Settings → Admin → Modify vehicle details**. For each saved chassis:
-   - enters the chassis number and clicks **Show**, then waits 10 seconds;
+   - enters the chassis number and clicks **Show**, then waits until the vehicle has loaded (up to 30 seconds);
    - looks the chassis up in the VIN Details sheet;
    - fills **Engine No** (sheet column C, Motor No), **Battery Details** (column B) and **Vehicle Charger No** (column D);
    - adds the comment **"Details updated"** and clicks **Save**;
    - opens the chassis again to confirm the DMS kept the new values.
-5. Logs out and moves on to the next dealer.
+5. Logs out and moves on to the next dealer. Three dealers are handled at once, each in its own browser window (`PDI_PARALLEL`; set it to 1 if the DMS allows only one session per login).
 
 ### Safety
 - **Dry run first:** a dry run fills the form but never clicks Save, so you can check everything before changing live data.
@@ -49,13 +49,13 @@ A run **passes** only when every blank chassis was updated and no dealer failed.
 | Result | Report email |
 |---|---|
 | Passed | Sent to the report owner, with the PDI team on CC |
-| Failed | **Not sent to anyone.** The results are still saved on the PC for the owner to check and re-run |
+| Failed | Also sent, to the same people. The subject says how many chassis need attention, and they are listed in the email. The run still shows as failed, with the dealers to re-run |
 | Dry run | Sent to the report owner only |
 
 ### The report
 - **Email body:** headline numbers (blank chassis found, updated, not in the VIN sheet, errors), a bar per dealer and a list of anything that needs attention.
 - **Attached dashboard (PDI_Dashboard.html):** open it in a browser. Click a dealer to filter, filter by outcome, search chassis / engine / battery / charger numbers, sort any column. Works on a phone and in dark mode.
-- **Attached Excel:** one row per chassis with the values used and the result, plus a sheet listing every dealer checked.
+- **Attached Excel:** a formatted workbook. It opens on a **Summary** sheet (headline figures and a table by dealer), then one row per chassis with the values used and the result colour-coded, then a sheet listing every dealer checked. Header rows are frozen and filterable.
 - **Daily report:** one combined email for all of the day's runs, showing each chassis's latest result.
 
 ### Results so far (28-Sep-2026)
@@ -80,9 +80,9 @@ A run **passes** only when every blank chassis was updated and no dealer failed.
 
 | File | What goes in it |
 |---|---|
-| `resources/credentials.json` | Dealer logins: `dealervalidUser` (Enquiry List, MIS), `dealerUsers` (GSTR), `PIDUsers` (PDI) |
+| `resources/credentials.json` | Dealer logins: `dealervalidUser` (Enquiry List, MIS), `dealerUsers` (GSTR), `PIDLogin` + `PIDDealerCodes` and `PIDUsers` (PDI) |
 | `.env` | Gmail sender, App Password, recipient, and the PDI CC list |
-| `resources/VIN Details (1).xlsx` | The manufacturer's VIN sheet (A = VIN, B = Battery No, C = Motor No, D = Charger) |
+| `resources/VIN Details.xlsx` (any `VIN Details….xlsx` name; the newest is used) | The manufacturer's VIN sheet (A = VIN, B = Battery No, C = Motor No, D = Charger) |
 
 **Commands** (in PowerShell use `npm.cmd` if scripts are blocked):
 
@@ -91,11 +91,11 @@ npm run test:enquiry-list      Enquiry List (~1–2 min)
 npm run test:gstr              GSTR Report, all dealers (~15–60 min)
 npm start                      MIS report check (~10 min)
 npm run test:pdi:dry           PDI: fill the form, don't Save
-npm run test:pdi               PDI: fill and Save (changes live data; ~25 s per chassis)
+npm run test:pdi               PDI: fill and Save (changes live data)
 npm run report:pdi-daily       PDI: one combined report for today's runs
 ```
 
-For PDI you can also double-click **run-pdi.bat** and choose D (dry run) or S (save).
+Always do `npm run test:pdi:dry` first, then `npm run test:pdi` to save.
 
 **Useful settings** (set before the command, or in `.env`):
 
@@ -103,13 +103,15 @@ For PDI you can also double-click **run-pdi.bat** and choose D (dry run) or S (s
 |---|---|
 | `PDI_DEALER` | Only these PDI dealers, comma-separated, e.g. `332009,332008` |
 | `PDI_TOP` | How many vehicles to list on the PDI page (default 500) |
+| `PDI_PARALLEL` | How many dealers to handle at once (default 3; 1 = one at a time) |
+| `PDI_LOAD_TIMEOUT_S` | Longest wait for a vehicle to load after Show / Save (default 30) |
 | `PDI_VIN_FILE` | Use a different VIN sheet |
 | `PDI_REPORT_DATE` | Daily report for another day (yyyy-mm-dd) |
 | `ENQ_FROM`, `ENQ_TO` | Enquiry List dates (dd-mm-yyyy); default 07-09-2026 to today |
 | `GSTR_FROM`, `GSTR_TO` | GSTR dates (dd-mm-yyyy) |
 | `BROWSER_CHANNEL` | `msedge` to use Microsoft Edge instead of Chrome |
 
-**Adding a PDI dealer:** add an entry to `PIDUsers` in `resources/credentials.json`, with the dealer code, username and password. No code change is needed.
+**Adding a PDI dealer:** add its code to `PIDDealerCodes` in `resources/credentials.json`; it signs in with the shared `PIDLogin`. A dealer with a different login goes in `PIDUsers` instead, with its dealer code, username and password (this wins if the code is in both). No code change is needed.
 
 ---
 
@@ -155,6 +157,8 @@ PDI negative cases tested include: a missing or placeholder login, an unknown de
 | `still has the <user>/<password> placeholders` | Put the dealer's real login in `resources/credentials.json` |
 | `Login failed: still on the login page` | Check that dealer's login in `resources/credentials.json` |
 | `Not in VIN Details sheet` | The chassis isn't in the VIN sheet; get an updated sheet and run that dealer again |
+| `VIN sheet has no usable …` | The VIN sheet has a note instead of a serial number (e.g. "CHARGER NOT ASSIGNED YET", "CONTACT FACTORY TEAM"). That field is left untouched in the DMS; ask the factory team for the number, then run that dealer again |
+| `Save clicked but values not kept — …` | The DMS didn't keep a value (often a battery / motor / charger number already on another vehicle). The message shows what the DMS has; check that vehicle by hand |
 | `Could not write … is it open in Excel?` | The file was saved under a new name; close Excel before the next run |
 | `The grid is full at Top 500` | Set `PDI_TOP` higher and run again |
 | A run seems stuck | Don't start two runs at once — each run clears the shared results folder |

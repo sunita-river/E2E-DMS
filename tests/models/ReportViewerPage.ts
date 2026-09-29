@@ -1,5 +1,8 @@
 import { Page, Locator, Download } from '@playwright/test';
 import * as XLSX from 'xlsx';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 // Reports over the viewer's display limit (1000 rows) don't render #GrdMain at all —
 // the viewer shows a "more than the 1000-record display limit" banner and downloads
@@ -7,6 +10,31 @@ import * as XLSX from 'xlsx';
 // grid reads a test makes (count, dealer codes, rows) share one download/parse.
 const autoDownloads = new WeakMap<Page, Promise<Download | null>>();
 const rowCache = new WeakMap<Page, Promise<Record<string, string>[]>>();
+// When each report tab was opened — only Excel files newer than this count as its download.
+const reportOpenedAt = new WeakMap<Page, number>();
+
+// Over-limit Excel files are kept here (Playwright's own copy is deleted when the run ends),
+// and the rows are read from the kept file. Override with REPORT_DOWNLOAD_DIR.
+const DOWNLOAD_DIR = process.env.REPORT_DOWNLOAD_DIR || path.join(process.cwd(), 'Downloads');
+
+// Newest .xls/.xlsx in the download folders modified at or after `since`, or null.
+// Fallback for when the download event never reached Playwright but the browser still
+// saved the file (e.g. into the Windows Downloads folder).
+function newestExcelSince(since: number): string | null {
+  const dirs = [DOWNLOAD_DIR, path.join(os.homedir(), 'Downloads')];
+  const candidates = dirs.flatMap((dir) => {
+    try {
+      return fs.readdirSync(dir)
+        .filter((f) => /\.xlsx?$/i.test(f) && !f.startsWith('~$'))
+        .map((f) => path.join(dir, f))
+        .map((file) => ({ file, mtime: fs.statSync(file).mtimeMs }));
+    } catch {
+      return []; // folder doesn't exist
+    }
+  });
+  const recent = candidates.filter((c) => c.mtime >= since - 5000).sort((a, b) => b.mtime - a.mtime);
+  return recent[0]?.file ?? null;
+}
 
 // Shared behavior for report screens reached via the "View Report" link:
 // date range pickers, opening the report in its own tab, and reading/
@@ -119,8 +147,10 @@ export class ReportViewerPage {
     console.log('[STEP] Opening the report in a new tab...');
     // Big reports can take a while to build server-side before the viewer tab opens.
     const popupPromise = this.page.waitForEvent('popup', { timeout: 180000 });
+    const clickedAt = Date.now();
     await this.viewReportLink.click();
     const reportPage = await popupPromise;
+    reportOpenedAt.set(reportPage, clickedAt);
     // Listen straight away: an over-limit report starts its Excel download on load.
     autoDownloads.set(reportPage, reportPage.waitForEvent('download', { timeout: 60000 }).catch(() => null));
     await reportPage.bringToFront();
@@ -212,22 +242,41 @@ export class ReportViewerPage {
   }
 
   // Uses the automatic download if it fired; otherwise clicks the banner's "click here".
+  // The file is saved into DOWNLOAD_DIR and read from there; if Playwright never gets the
+  // download, the newest Excel saved since the report opened is used instead.
   private async readOverLimitExcel(reportPage: Page): Promise<Record<string, string>[]> {
+    const openedAt = reportOpenedAt.get(reportPage) ?? Date.now() - 5 * 60 * 1000;
     let download = await Promise.race([
       autoDownloads.get(reportPage) ?? Promise.resolve(null),
       reportPage.waitForTimeout(15000).then(() => null),
     ]);
     if (!download) {
       console.log('[STEP] Automatic download did not start; clicking "click here"...');
-      const downloadPromise = reportPage.waitForEvent('download', { timeout: 120000 });
-      await reportPage.getByRole('link', { name: 'click here' }).click();
+      const downloadPromise = reportPage.waitForEvent('download', { timeout: 120000 }).catch(() => null);
+      await reportPage.getByRole('link', { name: 'click here' }).click().catch(() => {});
       download = await downloadPromise;
     }
-    const filePath = await download.path();
-    if (!filePath) {
-      throw new Error('Over-limit report Excel download did not produce a file (the download may have failed).');
+
+    let filePath: string | null = null;
+    if (download) {
+      const savedPath = path.join(DOWNLOAD_DIR, `${Date.now()}_${download.suggestedFilename()}`);
+      try {
+        fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+        await download.saveAs(savedPath);
+        filePath = savedPath;
+      } catch (err) {
+        console.log(`[WARN] Could not save the report Excel to ${DOWNLOAD_DIR} (${String((err as Error).message).slice(0, 80)}).`);
+        filePath = await download.path().catch(() => null);
+      }
     }
-    console.log(`[STEP] Reading over-limit report from Excel: ${download.suggestedFilename()}`);
+    if (!filePath) {
+      filePath = newestExcelSince(openedAt);
+      if (filePath) console.log('[WARN] The report download did not reach Playwright — using the newest Excel in the Downloads folder.');
+    }
+    if (!filePath) {
+      throw new Error(`Over-limit report Excel download did not produce a file (nothing new in ${DOWNLOAD_DIR} or ~/Downloads either).`);
+    }
+    console.log(`[STEP] Reading over-limit report from Excel: ${filePath}`);
 
     // cellDates + dateNF keep dates in the grid's "DD-MM-YYYY hh:mm" shape, which the
     // specs' date formatting expects.
@@ -251,7 +300,7 @@ export class ReportViewerPage {
       headerIndex = widest >= 3 ? top.findIndex((r) => filled(r) === widest) : -1;
     }
     if (headerIndex === -1) {
-      throw new Error(`Header row not found in ${download.suggestedFilename()}.`);
+      throw new Error(`Header row not found in ${path.basename(filePath)}.`);
     }
     const headers = table[headerIndex]!.map((h) => String(h).trim());
     return table

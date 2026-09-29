@@ -14,6 +14,7 @@ node_modules/
 # Report output - contains customer names, phone numbers and addresses
 /Output/
 /MIS Reports/
+/Downloads/
 
 # Browser profiles with saved DMS login sessions
 /dms-profile/

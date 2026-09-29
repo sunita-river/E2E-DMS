@@ -7,6 +7,18 @@ import nodemailer from 'nodemailer';
 // Mail apps strip JavaScript, so the email body is a static (table-based, inline-styled)
 // summary and the interactive dashboard travels as an attached .html file to open in a browser.
 
+// The VIN Details workbook: PDI_VIN_FILE, else the newest resources/VIN Details*.xlsx, so a renamed
+// or re-downloaded copy ("VIN Details (2).xlsx") is picked up without changing anything.
+export function vinFilePath(): string {
+  if (process.env.PDI_VIN_FILE) return process.env.PDI_VIN_FILE;
+  const dir = path.join(__dirname, '..', '..', 'resources');
+  const newest = (fs.existsSync(dir) ? fs.readdirSync(dir) : [])
+    .filter((f) => /^VIN Details.*\.xlsx$/i.test(f) && !f.startsWith('~$')) // ~$ = Excel's lock file
+    .map((f) => path.join(dir, f))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+  return newest ?? path.join(dir, 'VIN Details.xlsx');
+}
+
 export type ResultRow = Record<string, string>;
 export interface FailedDealer { dealer: string; error: string }
 // title labels the report, e.g. "PDI vehicle details · Daily summary" (default: "PDI vehicle details").
@@ -17,7 +29,7 @@ type Outcome = 'updated' | 'dryrun' | 'missing' | 'error';
 const OUTCOMES: { key: Outcome; label: string; icon: string; color: string }[] = [
   { key: 'updated', label: 'Updated', icon: '✔', color: '#0ca30c' },
   { key: 'dryrun', label: 'Filled (dry run)', icon: '◌', color: '#2a78d6' },
-  { key: 'missing', label: 'Not in VIN sheet', icon: '▲', color: '#fab219' },
+  { key: 'missing', label: 'No usable VIN data', icon: '▲', color: '#fab219' },
   { key: 'error', label: 'Error', icon: '✖', color: '#d03b3b' },
 ];
 
@@ -25,7 +37,7 @@ export function outcomeOf(row: ResultRow): Outcome {
   const s = row.Status || '';
   if (s.startsWith('Updated')) return 'updated';
   if (s.startsWith('Dry run')) return 'dryrun';
-  if (s.startsWith('Not in VIN')) return 'missing';
+  if (s.startsWith('Not in VIN') || s.startsWith('VIN sheet has no usable')) return 'missing';
   return 'error';
 }
 
@@ -64,15 +76,19 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
     </td>`;
 
   const maxTotal = Math.max(1, ...summary.map((s) => s.total));
-  const dealerRows = summary.map((s) => {
+  // Dealers with nothing blank share one line, so a run over many dealers stays readable.
+  const clean = summary.filter((s) => !s.failed && s.total === 0);
+  const cleanRow = clean.length ? `
+      <tr>
+        <td style="${font}padding:10px 12px;border-bottom:1px solid #eeede8;font-size:12px;color:#52514e;" colspan="3"><b style="color:#0b0b0b;">No blank PDI rows (${clean.length} dealers):</b> ${clean.map((s) => esc(s.dealer)).join(', ')}</td>
+      </tr>` : '';
+  const dealerRows = summary.filter((s) => s.failed || s.total > 0).map((s) => {
     const segs = OUTCOMES.filter((o) => s.counts[o.key] > 0).map((o) =>
       `<td style="background:${o.color};height:14px;border-right:2px solid #ffffff;" width="${(s.counts[o.key] / maxTotal) * 100}%" title="${esc(o.label)}: ${s.counts[o.key]}"></td>`).join('');
     const rest = s.total < maxTotal ? `<td width="${((maxTotal - s.total) / maxTotal) * 100}%"></td>` : '';
     const bar = s.failed
       ? `<span style="color:#d03b3b;font-weight:600;">✖ Dealer run failed</span>`
-      : s.total === 0
-        ? `<span style="color:#52514e;">No blank PDI rows</span>`
-        : `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>${segs}${rest}</tr></table>`;
+      : `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>${segs}${rest}</tr></table>`;
     const counts = OUTCOMES.filter((o) => s.counts[o.key] > 0).map((o) =>
       `<span style="white-space:nowrap;margin-right:10px;"><span style="color:${o.color};">${o.icon}</span> ${esc(o.label)} <b>${s.counts[o.key]}</b></span>`).join('');
     return `
@@ -115,13 +131,13 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
       <table width="100%" cellpadding="0" cellspacing="0"><tr>
         ${tile(t.blank, 'Blank chassis found', '#16325c')}
         ${tile(doneValue, doneLabel, meta.dryRun ? '#2a78d6' : '#0ca30c')}
-        ${tile(t.missing, 'Not in VIN sheet', '#fab219')}
+        ${tile(t.missing, 'No usable VIN data', '#fab219')}
         ${tile(t.error + t.failedDealers, 'Errors', '#d03b3b')}
       </tr></table>
       <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 8px;">By dealer</h3>
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e3de;border-radius:10px;border-collapse:separate;">
         <tr><th align="left" style="${font}padding:8px 12px;font-size:11px;color:#52514e;text-transform:uppercase;">Dealer</th><th align="right" style="${font}padding:8px 12px;font-size:11px;color:#52514e;text-transform:uppercase;">Blank</th><th align="left" style="${font}padding:8px 12px;font-size:11px;color:#52514e;text-transform:uppercase;">Outcome</th></tr>
-        ${dealerRows}
+        ${dealerRows}${cleanRow}
       </table>
       ${problemsHtml}
       <p style="${font}font-size:12px;color:#52514e;margin:22px 0 0;line-height:1.5;">
@@ -248,7 +264,7 @@ $('sub').innerHTML = (D.meta.dryRun ? '<span class="badge">DRY RUN — nothing s
 const tiles = [
   { v: total, l: 'Blank chassis found', a: 'var(--brand)', p: D.dealers.length + ' dealer(s) checked' },
   { v: done, l: D.meta.dryRun ? 'Filled (dry run)' : 'Updated', a: D.meta.dryRun ? 'var(--info)' : 'var(--good)', p: pct(done) + ' of blank' },
-  { v: sum('missing'), l: 'Not in VIN sheet', a: 'var(--warn)', p: pct(sum('missing')) + ' of blank' },
+  { v: sum('missing'), l: 'No usable VIN data', a: 'var(--warn)', p: pct(sum('missing')) + ' of blank' },
   { v: sum('error') + failedDealers.length, l: 'Errors', a: 'var(--crit)', p: sum('error') + ' chassis · ' + failedDealers.length + ' dealer(s)' },
 ];
 $('tiles').innerHTML = tiles.map((t) => '<div class="tile" style="--accent:' + t.a + '"><div class="v">' + t.v + '</div><div class="l">' + esc(t.l) + '</div><div class="p">' + esc(t.p) + '</div></div>').join('');
@@ -267,15 +283,16 @@ const hideTip = () => { tip.style.opacity = 0; };
 
 function renderDealers() {
   const max = Math.max(1, ...D.dealers.map((d) => d.total));
-  $('dealers').innerHTML = D.dealers.map((d) => {
+  // Dealers with nothing blank share one line, so a run over many dealers stays short.
+  const clean = D.dealers.filter((d) => !d.failed && !d.total).map((d) => d.dealer);
+  $('dealers').innerHTML = D.dealers.filter((d) => d.failed || d.total).map((d) => {
     let bar;
     if (d.failed) bar = '<div class="failed">✖ Run failed</div>';
-    else if (!d.total) bar = '<div class="none">No blank PDI rows</div>';
     else bar = '<div class="bar" style="width:' + (d.total / max) * 100 + '%">' + D.outcomes.filter((o) => d.counts[o.key])
       .map((o) => '<span data-tip="' + esc(d.dealer + ' · ' + o.label + ': ' + d.counts[o.key]) + '" style="flex:' + d.counts[o.key] + ';background:' + cssVar[o.key] + '"></span>').join('') + '</div>';
     return '<div class="drow' + (state.dealer === d.dealer ? ' sel' : '') + '" data-dealer="' + esc(d.dealer) + '" role="button" tabindex="0" aria-pressed="' + (state.dealer === d.dealer) + '">' +
       '<div class="name">' + esc(d.dealer) + '</div><div>' + bar + '</div><div class="num">' + d.total + ' blank</div></div>';
-  }).join('');
+  }).join('') + (clean.length ? '<div class="none" style="padding:10px 6px 2px"><b>No blank PDI rows (' + clean.length + ' dealers):</b> ' + esc(clean.join(', ')) + '</div>' : '');
   document.querySelectorAll('.drow').forEach((el) => {
     const pick = () => { state.dealer = state.dealer === el.dataset.dealer ? null : el.dataset.dealer; renderDealers(); renderTable(); };
     el.onclick = pick;
@@ -353,12 +370,9 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
     console.log('[STEP] PDI_SEND_EMAIL=0 — report email skipped.');
     return;
   }
-  // A failed run's report isn't emailed to anyone — only a clean run goes out.
+  // Sent whether or not the run fully passed: problems are listed under "Needs attention" and
+  // flagged in the subject.
   const problems = problemsOf(results, failed, meta.dryRun);
-  if (problems.length) {
-    console.log(`[STEP] Report email NOT sent — the run did not fully pass (${problems.length} problem(s)). Dashboard and Excel are saved locally.`);
-    return;
-  }
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
   const to = process.env.GMAIL_TO || user;
@@ -369,10 +383,13 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
 
   const t = totals(summary);
   const done = meta.dryRun ? t.dryrun : t.updated;
-  const subject = `${meta.title ? meta.title + ' — ' : 'PDI details '}${meta.dryRun ? '[DRY RUN] filled' : 'updated'}: ${done}/${t.blank} across ${t.dealers} dealer(s)` +
-    ` — ${meta.finishedAt.toISOString().slice(0, 10)}`;
-  // PDI_CC (the PDI audience) only on real runs; a dry run goes to GMAIL_TO alone.
-  const cc = meta.dryRun ? '' : [process.env.PDI_CC, process.env.GMAIL_CC].filter(Boolean).join(', ');
+  let subject = `${meta.title ? meta.title + ' — ' : 'PDI details '}${meta.dryRun ? '[DRY RUN] filled' : 'updated'}: ${done}/${t.blank} across ${t.dealers} dealer(s)` +
+    `${problems.length ? ` — ⚠ ${problems.length} need attention` : ''} — ${meta.finishedAt.toISOString().slice(0, 10)}`;
+  // PDI_CC (the PDI audience) only on real runs; a dry run goes to GMAIL_TO alone. PDI_EMAIL_REVIEW=1
+  // also sends to GMAIL_TO alone, marked [REVIEW], so the owner can check it before it goes to everyone.
+  const review = process.env.PDI_EMAIL_REVIEW === '1';
+  const cc = meta.dryRun || review ? '' : [process.env.PDI_CC, process.env.GMAIL_CC].filter(Boolean).join(', ');
+  if (review) subject = `[REVIEW] ${subject}`;
   try {
     await nodemailer.createTransport({ service: 'gmail', auth: { user, pass } }).sendMail({
       from: user,
