@@ -6,8 +6,9 @@
  * Run:
  *     npm start
  *
- * A browser window opens and logs in automatically with the "dealervalidUser"
- * account from resources/credentials.json (same login as the Playwright tests).
+ * A browser window opens and logs in automatically with the "misUser" account
+ * from resources/credentials.json (or "dealervalidUser", the Playwright tests'
+ * login, when there is no misUser).
  * Your session is kept in the "dms-profile" folder, so next time it goes straight in.
  * Uses Google Chrome by default; set BROWSER_CHANNEL=msedge to use Microsoft Edge.
  *
@@ -652,18 +653,20 @@ async function runWithContext(context) {
     console.log('Logged in.');
   }
 
+  // "misUser" if set, otherwise the Playwright tests' "dealervalidUser".
+  const misCreds = credentials.misUser || credentials.dealervalidUser;
   let pages = await readMenu();
   if (!pages) {
-    if (!credentials.dealervalidUser) throw new Error('resources/credentials.json has no "dealervalidUser" to log in with.');
+    if (!misCreds) throw new Error('resources/credentials.json has no "misUser" or "dealervalidUser" to log in with.');
     try {
-      await login(credentials.dealervalidUser);
+      await login(misCreds);
     } catch (e) {
       console.log(`Automatic login failed (${e.message.split('\n')[0]}).`);
       await ask('\nPlease log in to the DMS in the browser window, then press Enter here... '); // throws on CI
     }
     await main.goto(CONFIG.baseUrl + CONFIG.startPage, { waitUntil: 'load' });
     pages = await readMenu();
-    if (!pages) throw new Error('Could not find the MIS menu after logging in - check the dealervalidUser credentials.');
+    if (!pages) throw new Error('Could not find the MIS menu after logging in - check the misUser / dealervalidUser credentials.');
   }
   // The menu's own "MIS" entry just points back at Accounts Reports (url ends in "#") - skip the duplicate.
   pages = pages.filter(p => !/^MIS$/i.test(p.name));

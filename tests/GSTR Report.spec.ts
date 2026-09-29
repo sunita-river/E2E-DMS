@@ -8,7 +8,8 @@ import { ReportViewerPage } from './models/ReportViewerPage';
 // Optional overrides (handy on CI/CD, where secrets and folders live elsewhere):
 //   CREDENTIALS_FILE   path to a credentials.json (default: resources/credentials.json)
 //   GSTR_OUTPUT_DIR    where the Excel files go (default: <project>/Output)
-//   GSTR_FROM/GSTR_TO  report dates as dd-mm-yyyy (default: 01-09-2026 to 24-09-2026)
+//   GSTR_FROM/GSTR_TO  report dates as dd-mm-yyyy (default: 01-09-2026 to yesterday)
+//   REPORT_DOWNLOAD_DIR where 1000+ row report Excels are saved and read from (default: <project>/Downloads)
 const CREDENTIALS_FILE = process.env.CREDENTIALS_FILE || path.join(__dirname, '..', 'resources', 'credentials.json');
 const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
 const OUTPUT_DIR = process.env.GSTR_OUTPUT_DIR || path.join(process.cwd(), 'Output');
@@ -21,10 +22,17 @@ function parseDateEnv(name: string, fallback: Date): Date {
   return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
 }
 
-// Report range: 1st September 2026 to 24th September 2026 (unless GSTR_FROM / GSTR_TO are set).
+// Report range: 1st September 2026 to yesterday (unless GSTR_FROM / GSTR_TO are set).
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const yesterday = (() => {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1);
+})();
 const REPORT_FROM = parseDateEnv('GSTR_FROM', new Date(2026, 8, 1));  // months are 0-based: 8 = September
-const REPORT_TO = parseDateEnv('GSTR_TO', new Date(2026, 8, 24));
+const REPORT_TO = parseDateEnv('GSTR_TO', yesterday);
+if (REPORT_TO < REPORT_FROM) {
+  throw new Error(`GSTR To date ${REPORT_TO.toDateString()} is before From date ${REPORT_FROM.toDateString()} — set GSTR_FROM/GSTR_TO.`);
+}
 
 const dateLabel = (d: Date) =>
   `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;

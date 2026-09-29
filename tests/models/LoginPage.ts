@@ -19,7 +19,9 @@ export class LoginPage {
   readonly riverUserPasswordInput: Locator;
   readonly riverUserSignInButton: Locator;
 
-  constructor(page: Page) {
+  // log: where step messages go (default console). PDI.spec.ts passes one that prefixes the dealer
+  // code, since several dealers log at once there.
+  constructor(page: Page, private readonly log: (message: string) => void = console.log) {
     this.page = page;
     this.dealerCodeInput = page.locator('input[name="DealerCode"]');
     this.branchDropdown = page.locator('select[name="BranchSlno"]');
@@ -37,7 +39,7 @@ export class LoginPage {
   }
 
   async goto() {
-    console.log('[STEP 1] Navigating to login page...');
+    this.log('[STEP 1] Navigating to login page...');
     await this.page.goto('https://rivermobility.gaindms.com/', { waitUntil: 'domcontentloaded' });
 
     // The app's legacy ASP.NET report viewer renders blank under Playwright's fixed default
@@ -55,7 +57,7 @@ export class LoginPage {
       await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
       await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'maximized' } });
     } catch {
-      console.log('[STEP] Window maximize not available (headless?) — continuing.');
+      this.log('[STEP] Window maximize not available (headless?) — continuing.');
     }
   }
 
@@ -88,7 +90,7 @@ export class LoginPage {
     await this.usernameInput.fill(creds.username || '');
     await this.passwordInput.fill(creds.password || '');
 
-    console.log('[STEP 2] Clicking Sign In button...');
+    this.log('[STEP 2] Clicking Sign In button...');
     await this.loginButton.click();
 
     // Allow server response processing
@@ -98,14 +100,14 @@ export class LoginPage {
   // "River User" login skips the Dealer Code / Branch lookup entirely — it's a plain
   // username + password sign-in, used for the salesforceValidUser-style credential.
   async loginAsRiverUser(creds: UserCredentials) {
-    console.log('[STEP] Switching to River User login...');
+    this.log('[STEP] Switching to River User login...');
     await this.riverUserLink.click();
 
     await this.riverUserUsernameInput.fill(creds.username || '');
     await this.riverUserUsernameInput.press('Tab');
     await this.riverUserPasswordInput.fill(creds.password || '');
 
-    console.log('[STEP] Clicking Sign In button...');
+    this.log('[STEP] Clicking Sign In button...');
     await this.riverUserSignInButton.click();
 
     // Allow server response processing
@@ -113,7 +115,7 @@ export class LoginPage {
   }
 
   async verifyDashboard() {
-    console.log('[STEP 3] Waiting for dashboard navigation...');
+    this.log('[STEP 3] Waiting for dashboard navigation...');
 
     // Wait for main dashboard container or caption
     // A wrong password / locked account stays on the login page — say so instead of a bare timeout.
@@ -129,12 +131,12 @@ export class LoginPage {
     // Safely handle spinner if active
     await this.page.locator('.spinner').waitFor({ state: 'detached', timeout: 10000 }).catch(() => {});
 
-    console.log('[STEP 3] Verifying Dashboard visibility...');
+    this.log('[STEP 3] Verifying Dashboard visibility...');
 
     // Unified Regex to catch either Sales or Service Dashboard links safely
     const dashboardLink = this.page.getByRole('link', { name: /(Sales|Service) Dashboard/i });
     await expect(dashboardLink.first()).toBeVisible({ timeout: 10000 });
-    console.log('✅ Dashboard verified successfully!');
+    this.log('✅ Dashboard verified successfully!');
   }
 
  

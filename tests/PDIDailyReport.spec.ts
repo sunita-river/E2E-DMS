@@ -2,7 +2,8 @@ import { test } from '@playwright/test';
 import * as XLSX from 'xlsx';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { sendPdiReport, problemsOf, ResultRow, FailedDealer } from './utils/pdiReport';
+import { sendPdiReport, problemsOf, ResultRow, FailedDealer, vinFilePath } from './utils/pdiReport';
+import { writePdiWorkbook, readPdiRow } from './utils/pdiWorkbook';
 
 // Daily PDI summary: merges every PDI run saved in Output today (PDI_BlankChassis_*.xlsx written by
 // tests/PDI.spec.ts) into one per-dealer report and emails it, with the interactive dashboard and a
@@ -18,7 +19,7 @@ import { sendPdiReport, problemsOf, ResultRow, FailedDealer } from './utils/pdiR
 //   PDI_REPORT_DATE  yyyy-mm-dd to report on (default: today, by the files' saved time)
 //   PDI_SEND_EMAIL   0 = build the report files but don't email them
 const OUTPUT_DIR = process.env.GSTR_OUTPUT_DIR || path.join(process.cwd(), 'Output');
-const VIN_FILE = process.env.PDI_VIN_FILE || path.join(__dirname, '..', 'resources', 'VIN Details (1).xlsx');
+const VIN_FILE = vinFilePath();
 
 const localDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -42,7 +43,7 @@ function readRunFiles(day: string): RunFile[] {
     .sort((a, b) => a.savedAt.getTime() - b.savedAt.getTime() || a.file.localeCompare(b.file))
     .map((r) => {
       const wb = XLSX.readFile(r.file);
-      const sheet = (name: string) => wb.Sheets[name] ? XLSX.utils.sheet_to_json<ResultRow>(wb.Sheets[name]!, { raw: false, defval: '' }) : null;
+      const sheet = (name: string) => wb.Sheets[name] ? XLSX.utils.sheet_to_json<ResultRow>(wb.Sheets[name]!, { raw: false, defval: '' }).map(readPdiRow) : null;
       return { ...r, rows: sheet('PDI Blank Chassis') ?? sheet(wb.SheetNames[0]!) ?? [], dealers: sheet('Dealers') };
     })
     // A dry run saved nothing, so the whole run is left out — including any errors it hit.
@@ -95,18 +96,11 @@ test('Should email the combined PDI report for the day', async () => {
   const results = [...latest.values()].map((v) => v.row)
     .sort((a, b) => dealerOrder.indexOf(a.Dealer!) - dealerOrder.indexOf(b.Dealer!));
 
-  let dailyFile = path.join(OUTPUT_DIR, `PDI_Daily_${day}.xlsx`);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(results), 'PDI Daily');
-  try {
-    XLSX.writeFile(workbook, dailyFile);
-  } catch (err) {
-    // Usually yesterday's/earlier copy is open in Excel (Windows locks it) — save beside it instead.
-    const fallback = dailyFile.replace(/\.xlsx$/, `_${Date.now()}.xlsx`);
-    console.log(`[WARN] Could not write ${path.basename(dailyFile)} (${String((err as Error).message).slice(0, 80)}) — is it open in Excel? Saved as ${path.basename(fallback)} instead.`);
-    XLSX.writeFile(workbook, fallback);
-    dailyFile = fallback;
-  }
+  const title = `PDI daily summary · ${day} · ${runs.length} run(s)`;
+  const dailyFile = await writePdiWorkbook(path.join(OUTPUT_DIR, `PDI_Daily_${day}.xlsx`), {
+    title, subtitle: `${dealerOrder.length} dealer(s) · latest result per chassis across the day's runs`,
+    dryRun: false, dealers: dealerOrder, failed: failures, rows: results, rowsSheet: 'PDI Daily',
+  });
   console.log(`[STEP] Combined ${results.length} chassis across ${dealerOrder.length} dealer(s) into ${dailyFile}`);
 
   const withoutDealerList = runs.filter((r) => !r.dealers).length;
@@ -120,9 +114,9 @@ test('Should email the combined PDI report for the day', async () => {
     finishedAt: runs[runs.length - 1]!.savedAt,
     dealers: dealerOrder,
     vinFile: VIN_FILE,
-    title: `PDI daily summary · ${day} · ${runs.length} run(s)`,
+    title,
   }, dailyFile);
 
   const problems = problemsOf(results, failures, false);
-  if (problems.length) throw new Error(`${problems.length} problem(s) today — daily report not emailed:\n  ${problems.slice(0, 20).join('\n  ')}`);
+  if (problems.length) throw new Error(`${problems.length} problem(s) today (listed in the emailed report):\n  ${problems.slice(0, 20).join('\n  ')}`);
 });
