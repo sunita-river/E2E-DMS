@@ -53,10 +53,13 @@ A run **passes** only when every blank chassis was updated and no dealer failed.
 | Dry run | Sent to the report owner only |
 
 ### The report
-- **Email body:** headline numbers (blank chassis found, updated, not in the VIN sheet, errors), a bar per dealer and a list of anything that needs attention.
-- **Attached dashboard (PDI_Dashboard.html):** open it in a browser. Click a dealer to filter, filter by outcome, search chassis / engine / battery / charger numbers, sort any column. Works on a phone and in dark mode.
-- **Attached Excel:** a formatted workbook. It opens on a **Summary** sheet (headline figures and a table by dealer), then one row per chassis with the values used and the result colour-coded, then a sheet listing every dealer checked. Header rows are frozen and filterable.
-- **Daily report:** one combined email for all of the day's runs, showing each chassis's latest result.
+- **Email body:** the day's headline numbers (blank chassis found, updated, not in the VIN sheet, errors); **"Till now" KPIs** since tracking began (total chassis found, total updated, no usable VIN data still open); a **day-wise tracking table** for the last 14 days with running totals; a bar per dealer; and a list of anything that needs attention.
+- **Attachments:** Excel only — the day's workbook and **PDI_Master.xlsx**. No HTML files are emailed.
+- **PDI_Master.xlsx:** opens on a **Tracking** sheet (the "till now" KPIs and one row per day since tracking began, with a green bar on Updated to show the trend), then one sheet per day for the last 3 days with every chassis.
+- **Dashboards (saved on the PC, not emailed):** `Output/PDI_Master.html` covers the last 3 days (totals, a day-wise chart, chassis updated per dealer per day, every chassis with filters and search). `Output/PDI_Daily_<date>.html` covers one day (click a dealer to filter, filter by outcome, search, sort). Both work on a phone and in dark mode.
+- **Day's Excel:** a formatted workbook. It opens on a **Summary** sheet (headline figures and a table by dealer), then one row per chassis with the values used and the result colour-coded, then a sheet listing every dealer checked. Header rows are frozen and filterable.
+- **Daily report:** one combined email for all of the day's runs, showing each chassis's latest result. It goes out once a day; a review copy (to the report owner only, marked [REVIEW]) can be sent first.
+- **History:** run files and daily copies are kept for 3 days, then deleted. The all-time history behind the Tracking sheet is kept separately and never deleted. A chassis counts as updated once it is saved, or once it stops showing as blank on a later day (dealers whose login failed that day are not counted).
 
 ### Results so far (28-Sep-2026)
 **160 chassis updated across 12 dealers, 0 errors left.** 15 dealers were checked; 3 had nothing blank.

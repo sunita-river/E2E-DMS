@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import ExcelJS from 'exceljs';
 import { outcomeOf, ResultRow, FailedDealer } from './pdiReport';
+import type { PdiHistory } from './pdiHistory';
 
 // Formatted Excel for the PDI run (tests/PDI.spec.ts) and the daily summary (PDIDailyReport.spec.ts):
 // a Summary sheet first, then one row per chassis, then (for a run) every dealer checked.
@@ -158,6 +159,89 @@ function addSummary(wb: ExcelJS.Workbook, book: PdiWorkbook) {
   }
   ws.getCell(n + 1, 1).value = 'Full details are on the next sheet(s). Use the filter arrows in the header row to narrow them down.';
   ws.getCell(n + 1, 1).font = { italic: true, size: 9, color: { argb: INK2 } };
+}
+
+// Tracking sheet (first in the master; Excel reserves the name "History"): "till now" KPIs, then one row per day since the history began,
+// newest first, with that day's counts and running totals. A data bar on Updated shows the trend.
+function addHistory(wb: ExcelJS.Workbook, history: PdiHistory) {
+  const now = history.latest!;
+  const ws = wb.addWorksheet('Tracking', { views: [{ showGridLines: false, state: 'frozen', ySplit: 7 }] });
+  ws.columns = [{ width: 16 }, { width: 13 }, { width: 13 }, { width: 15 }, { width: 10 }, { width: 15 }, { width: 15 }, { width: 18 }];
+
+  ws.mergeCells('A1:H1');
+  ws.getCell('A1').value = 'River DMS · PDI history';
+  ws.getCell('A1').font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+  ws.getCell('A1').fill = fill(BRAND);
+  ws.getCell('A1').alignment = { vertical: 'middle', indent: 1 };
+  ws.getRow(1).height = 32;
+  ws.mergeCells('A2:H2');
+  ws.getCell('A2').value = `Since ${history.since} · ${history.days.length} day(s) · a chassis that stopped showing as blank counts as updated`;
+  ws.getCell('A2').font = { color: { argb: INK2 } };
+  ws.getCell('A2').alignment = { indent: 1 };
+
+  const tiles: [string, number, typeof TONES.good, string][] = [
+    ['Total chassis found', now.totalFound, { fill: 'FFE9EEF6', font: BRAND }, 'A4:B4'],
+    ['Total chassis updated', now.totalUpdated, TONES.good, 'C4:D4'],
+    ['No usable VIN data (still open)', now.openMissing, TONES.warn, 'E4:F4'],
+    ['Errors (still open)', now.openError, TONES.crit, 'G4:H4'],
+  ];
+  tiles.forEach(([label, value, tone, range]) => {
+    const [from, to] = range.split(':') as [string, string];
+    ws.mergeCells(range);
+    ws.mergeCells(from.replace('4', '5') + ':' + to.replace('4', '5'));
+    const v = ws.getCell(from);
+    const l = ws.getCell(from.replace('4', '5'));
+    v.value = value;
+    v.font = { bold: true, size: 18, color: { argb: tone.font } };
+    l.value = label;
+    l.font = { size: 9, color: { argb: INK2 } };
+    [v, l].forEach((c) => { c.fill = fill(tone.fill); c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; });
+  });
+  ws.getRow(4).height = 30;
+  ws.getRow(5).height = 22;
+
+  const head = ws.getRow(7);
+  head.values = ['Day', 'Blank found', 'Updated', 'No usable VIN', 'Errors', 'Total found', 'Total updated', 'Still no VIN data'];
+  head.height = 30;
+  head.eachCell((c) => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = fill(BRAND); c.border = BORDER; c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
+
+  const days = [...history.days].reverse();
+  days.forEach((d, i) => {
+    const row = ws.getRow(8 + i);
+    row.values = [d.day, d.found, d.updated, d.missing, d.error, d.totalFound, d.totalUpdated, d.openMissing];
+    row.eachCell({ includeEmpty: true }, (c, col) => {
+      c.border = BORDER;
+      c.alignment = { vertical: 'middle', horizontal: col === 1 ? 'left' : 'right' };
+      if (col >= 6) c.fill = fill('FFF7F7F4');
+    });
+    row.getCell(1).font = { bold: true };
+  });
+  if (days.length) {
+    ws.addConditionalFormatting({
+      ref: `C8:C${7 + days.length}`,
+      rules: [{ type: 'dataBar', priority: 1, cfvo: [{ type: 'num', value: 0 }, { type: 'max' }], color: { argb: 'FF0CA30C' }, gradient: false } as ExcelJS.ConditionalFormattingRule],
+    });
+  }
+  const note = ws.getCell(9 + days.length, 1);
+  note.value = 'Columns F–H are running totals till that day. Each day\'s chassis are on the dated sheets (last 3 days).';
+  note.font = { italic: true, size: 9, color: { argb: INK2 } };
+}
+
+// PDI master: one sheet per date (named yyyy-mm-dd, newest first), each holding that day's rows from
+// its PDI_Daily copy. If the file is locked (open in Excel) it is left as it is — the next run
+// rewrites it — rather than saved beside it, so there is only ever one master.
+export async function writePdiMaster(filePath: string, days: { day: string; rows: ResultRow[] }[], history?: PdiHistory): Promise<boolean> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'E2E DMS automation';
+  if (history?.latest) addHistory(wb, history);
+  [...days].sort((a, b) => b.day.localeCompare(a.day)).forEach(({ day, rows }) => addTable(wb, day, CHASSIS_KEYS, rows, 'Status'));
+  try {
+    await wb.xlsx.writeFile(filePath);
+    return true;
+  } catch (err) {
+    console.log(`[WARN] Could not update ${path.basename(filePath)} (${String((err as Error).message).slice(0, 80)}) — is it open in Excel? It will be updated on the next run.`);
+    return false;
+  }
 }
 
 // Writes the workbook; if the file is locked (usually open in Excel), saves beside it instead.

@@ -108,6 +108,11 @@ export default class GmailReporter implements Reporter {
       console.log('[gmail-reporter] Skipping email — no tests ran (e.g. --list).');
       return;
     }
+    // PDI runs (npm run test:pdi / report:pdi-daily set PDI_RUN=1) have their own once-a-day email.
+    if (process.env.PDI_RUN === '1') {
+      console.log('[gmail-reporter] Skipping email — PDI run; the PDI report is emailed once a day by npm run report:pdi-daily.');
+      return;
+    }
 
     const user = process.env.GMAIL_USER;
     const appPassword = process.env.GMAIL_APP_PASSWORD;

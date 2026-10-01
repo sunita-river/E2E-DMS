@@ -2,10 +2,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import nodemailer from 'nodemailer';
+import type { PdiHistory } from './pdiHistory';
 
 // Per-dealer summary email + interactive HTML dashboard for tests/PDI.spec.ts.
 // Mail apps strip JavaScript, so the email body is a static (table-based, inline-styled)
-// summary and the interactive dashboard travels as an attached .html file to open in a browser.
+// summary; only Excel files are attached. The interactive dashboards are saved as .html in Output/.
 
 // The VIN Details workbook: PDI_VIN_FILE, else the newest resources/VIN Details*.xlsx, so a renamed
 // or re-downloaded copy ("VIN Details (2).xlsx") is picked up without changing anything.
@@ -22,7 +23,7 @@ export function vinFilePath(): string {
 export type ResultRow = Record<string, string>;
 export interface FailedDealer { dealer: string; error: string }
 // title labels the report, e.g. "PDI vehicle details · Daily summary" (default: "PDI vehicle details").
-export interface ReportMeta { dryRun: boolean; startedAt: Date; finishedAt: Date; dealers: string[]; vinFile: string; title?: string }
+export interface ReportMeta { dryRun: boolean; startedAt: Date; finishedAt: Date; dealers: string[]; vinFile: string; title?: string; history?: PdiHistory }
 const titleOf = (m: ReportMeta) => m.title || 'PDI vehicle details';
 
 type Outcome = 'updated' | 'dryrun' | 'missing' | 'error';
@@ -64,7 +65,48 @@ function totals(summary: DealerSummary[]) {
 
 // ---------------------------------------------------------------- email body (static)
 
-function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: ReportMeta): string {
+const fmtDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' });
+
+// "Till now" KPIs and a day-wise tracking table (newest first, last 14 days) from the PDI history.
+function historyHtml(history: PdiHistory | undefined, font: string, tile: (v: number | string, l: string, a: string) => string): string {
+  const now = history?.latest;
+  if (!history || !now) return '';
+  const days = [...history.days].reverse().slice(0, 14);
+  const max = Math.max(1, ...days.map((d) => d.found));
+  const th = (label: string, align = 'right') => `<th align="${align}" style="${font}padding:8px 8px;font-size:10px;color:#52514e;text-transform:uppercase;">${label}</th>`;
+  const td = (v: number | string, extra = '') => `<td align="right" style="${font}padding:7px 8px;border-bottom:1px solid #eeede8;font-size:12px;color:#0b0b0b;${extra}">${esc(v)}</td>`;
+  const rows = days.map((d) => {
+    const bar = d.found ? `<table width="${Math.max(4, (d.found / max) * 100)}%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>` +
+      (d.updated ? `<td width="${(d.updated / d.found) * 100}%" style="background:#0ca30c;height:10px;border-right:2px solid #ffffff;" title="Updated: ${d.updated}"></td>` : '') +
+      (d.missing ? `<td width="${(d.missing / d.found) * 100}%" style="background:#fab219;height:10px;border-right:2px solid #ffffff;" title="No usable VIN data: ${d.missing}"></td>` : '') +
+      (d.error ? `<td width="${(d.error / d.found) * 100}%" style="background:#d03b3b;height:10px;" title="Errors: ${d.error}"></td>` : '') +
+      '</tr></table>' : '';
+    return `<tr>
+      <td style="${font}padding:7px 8px;border-bottom:1px solid #eeede8;font-size:12px;font-weight:600;color:#0b0b0b;white-space:nowrap;">${esc(fmtDay(d.day))}</td>
+      <td style="${font}padding:7px 8px;border-bottom:1px solid #eeede8;" width="26%">${bar}</td>
+      ${td(d.found)}${td(d.updated)}${td(d.missing)}
+      ${td(d.totalFound, 'background:#f7f7f4;')}${td(d.totalUpdated, 'background:#f7f7f4;')}${td(d.openMissing, 'background:#f7f7f4;')}
+    </tr>`;
+  }).join('');
+  return `
+      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 4px;">Till now · since ${esc(fmtDay(history.since!))}</h3>
+      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+        ${tile(now.totalFound, 'Total chassis found', '#16325c')}
+        ${tile(now.totalUpdated, 'Total chassis updated', '#0ca30c')}
+        ${tile(now.openMissing, 'No usable VIN data (still open)', '#fab219')}
+      </tr></table>
+      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:16px 0 8px;">Day-wise tracking</h3>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e3de;border-radius:10px;border-collapse:separate;">
+        <tr>${th('Day', 'left')}${th('', 'left')}${th('Found')}${th('Updated')}${th('No VIN data')}${th('Total found')}${th('Total updated')}${th('Still no VIN')}</tr>
+        ${rows}
+      </table>
+      <div style="${font}font-size:11px;color:#8a8984;margin-top:6px;">
+        <span style="color:#0ca30c;">■</span> Updated &nbsp;<span style="color:#fab219;">■</span> No usable VIN data &nbsp;<span style="color:#d03b3b;">■</span> Error ·
+        Shaded columns are running totals till that day. A chassis that stopped showing as blank counts as updated.
+      </div>`;
+}
+
+function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: ReportMeta, masterAttached = false): string {
   const t = totals(summary);
   const font = "font-family:'Segoe UI',Roboto,Arial,sans-serif;";
   const tile = (value: number | string, label: string, accent: string) => `
@@ -114,7 +156,7 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
          <tr><th align="left" style="${font}padding:8px 10px;font-size:11px;color:#52514e;text-transform:uppercase;">Dealer</th><th align="left" style="${font}padding:8px 10px;font-size:11px;color:#52514e;text-transform:uppercase;">Chassis</th><th align="left" style="${font}padding:8px 10px;font-size:11px;color:#52514e;text-transform:uppercase;">Problem</th></tr>
          ${problemRows}
        </table>
-       ${problems.length > 50 ? `<p style="${font}font-size:12px;color:#52514e;">…and ${problems.length - 50} more — see the attached dashboard / Excel.</p>` : ''}`
+       ${problems.length > 50 ? `<p style="${font}font-size:12px;color:#52514e;">…and ${problems.length - 50} more — see the attached Excel.</p>` : ''}`
     : `<p style="${font}font-size:14px;color:#0ca30c;margin:24px 0 0;">✔ No errors — every blank chassis was ${meta.dryRun ? 'filled' : 'updated'}.</p>`;
 
   const doneLabel = meta.dryRun ? 'Filled (dry run)' : 'Updated';
@@ -134,6 +176,7 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
         ${tile(t.missing, 'No usable VIN data', '#fab219')}
         ${tile(t.error + t.failedDealers, 'Errors', '#d03b3b')}
       </tr></table>
+      ${historyHtml(meta.history, font, tile)}
       <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 8px;">By dealer</h3>
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e3de;border-radius:10px;border-collapse:separate;">
         <tr><th align="left" style="${font}padding:8px 12px;font-size:11px;color:#52514e;text-transform:uppercase;">Dealer</th><th align="right" style="${font}padding:8px 12px;font-size:11px;color:#52514e;text-transform:uppercase;">Blank</th><th align="left" style="${font}padding:8px 12px;font-size:11px;color:#52514e;text-transform:uppercase;">Outcome</th></tr>
@@ -141,8 +184,8 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
       </table>
       ${problemsHtml}
       <p style="${font}font-size:12px;color:#52514e;margin:22px 0 0;line-height:1.5;">
-        📊 <b>Open the attached PDI_Dashboard.html</b> in a browser for the interactive view (filter by dealer or outcome, search chassis numbers, sort).<br/>
-        The full list is also in the attached Excel. Run from ${esc(process.env.GITHUB_ACTIONS ? 'GitHub Actions' : `local PC (${os.hostname()})`)} · VIN sheet: ${esc(path.basename(meta.vinFile))}
+        📎 The full chassis list is in the attached Excel${masterAttached ? '; PDI_Master.xlsx has the day-wise Tracking sheet and the last 3 days\' chassis' : ''}.<br/>
+        Run from ${esc(process.env.GITHUB_ACTIONS ? 'GitHub Actions' : `local PC (${os.hostname()})`)} · VIN sheet: ${esc(path.basename(meta.vinFile))}
       </p>
     </td></tr>
   </table></td></tr></table></body></html>`;
@@ -150,21 +193,8 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
 
 // ---------------------------------------------------------------- interactive dashboard (attachment)
 
-function buildDashboardHtml(summary: DealerSummary[], results: ResultRow[], meta: ReportMeta): string {
-  const data = {
-    meta: { dryRun: meta.dryRun, finished: fmtTime(meta.finishedAt), minutes: minutes(meta), vinFile: path.basename(meta.vinFile) },
-    outcomes: OUTCOMES,
-    dealers: summary.map((s) => ({ dealer: s.dealer, failed: s.failed || '', total: s.total, counts: s.counts })),
-    rows: results.map((r) => ({ dealer: r.Dealer, chassis: r.ChassisNo, blank: r.BlankFields, engine: r.EngineNo, battery: r.BatteryDetails, charger: r.VehicleChargerNo, status: r.Status, outcome: outcomeOf(r) })),
-  };
-  // Keep "</script>" and friends from breaking out of the inline JSON.
-  const json = JSON.stringify(data).replace(/</g, '\\u003c');
-
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PDI Update Dashboard</title>
-<style>
-:root{color-scheme:light;--bg:#f4f3ef;--surface:#fcfcfb;--card:#ffffff;--line:#e4e3de;--grid:#eeede8;--ink:#0b0b0b;--ink2:#52514e;--ink3:#8a8984;--brand:#16325c;--chip:#efeee9;
+// Shared by the daily dashboard and the PDI master dashboard.
+const DASH_CSS = `:root{color-scheme:light;--bg:#f4f3ef;--surface:#fcfcfb;--card:#ffffff;--line:#e4e3de;--grid:#eeede8;--ink:#0b0b0b;--ink2:#52514e;--ink3:#8a8984;--brand:#16325c;--chip:#efeee9;
 --good:#0ca30c;--info:#2a78d6;--warn:#fab219;--crit:#d03b3b}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#111110;--surface:#1a1a19;--card:#222220;--line:#34332f;--grid:#2b2a27;--ink:#ffffff;--ink2:#c3c2b7;--ink3:#8f8e86;--brand:#3987e5;--chip:#2b2a27;--info:#3987e5}}
 :root[data-theme="dark"]{color-scheme:dark;--bg:#111110;--surface:#1a1a19;--card:#222220;--line:#34332f;--grid:#2b2a27;--ink:#ffffff;--ink2:#c3c2b7;--ink3:#8f8e86;--brand:#3987e5;--chip:#2b2a27;--info:#3987e5}
@@ -213,7 +243,23 @@ td.mono{font-family:Consolas,'Cascadia Mono',monospace;font-size:12px}
 .errbox{border-left:4px solid var(--crit)}
 .errbox li{margin:4px 0}
 @media (max-width:560px){.drow{grid-template-columns:70px 1fr 50px}h1{font-size:20px}}
-</style></head>
+`;
+
+function buildDashboardHtml(summary: DealerSummary[], results: ResultRow[], meta: ReportMeta): string {
+  const data = {
+    meta: { dryRun: meta.dryRun, finished: fmtTime(meta.finishedAt), minutes: minutes(meta), vinFile: path.basename(meta.vinFile) },
+    outcomes: OUTCOMES,
+    dealers: summary.map((s) => ({ dealer: s.dealer, failed: s.failed || '', total: s.total, counts: s.counts })),
+    rows: results.map((r) => ({ dealer: r.Dealer, chassis: r.ChassisNo, blank: r.BlankFields, engine: r.EngineNo, battery: r.BatteryDetails, charger: r.VehicleChargerNo, status: r.Status, outcome: outcomeOf(r) })),
+  };
+  // Keep "</script>" and friends from breaking out of the inline JSON.
+  const json = JSON.stringify(data).replace(/</g, '\\u003c');
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDI Update Dashboard</title>
+<style>
+${DASH_CSS}</style></head>
 <body><div class="wrap">
 <header>
   <div><div class="eyebrow">River DMS · ${esc(titleOf(meta))}</div><h1 id="headline"></h1><div class="sub" id="sub"></div></div>
@@ -342,6 +388,192 @@ renderTable();
 </script></body></html>`;
 }
 
+// ---------------------------------------------------------------- PDI master dashboard (Output/PDI_Master.html)
+
+// One page over every day in the PDI master: totals, a day-wise outcome chart, updated chassis per
+// dealer per day, and every chassis row (filter by day, dealer or outcome; search; sort).
+function buildMasterDashboardHtml(days: { day: string; rows: ResultRow[] }[], generatedAt: Date): string {
+  const sorted = [...days].sort((a, b) => a.day.localeCompare(b.day));
+  const data = {
+    generated: fmtTime(generatedAt),
+    outcomes: OUTCOMES,
+    days: sorted.map((d) => d.day),
+    rows: sorted.flatMap(({ day, rows }) => rows.map((r) => ({ day, dealer: r.Dealer, chassis: r.ChassisNo, blank: r.BlankFields, engine: r.EngineNo, battery: r.BatteryDetails, charger: r.VehicleChargerNo, status: r.Status, outcome: outcomeOf(r) }))),
+  };
+  const json = JSON.stringify(data).replace(/</g, '\\u003c');
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDI Master Dashboard</title>
+<style>
+${DASH_CSS}
+.drow{grid-template-columns:110px 1fr 150px}
+.dtable td.n,.dtable th.n{text-align:right;font-variant-numeric:tabular-nums}
+.dtable tr.tot td{font-weight:700;border-top:1px solid var(--line)}
+.dtable td.zero{color:var(--ink3)}
+.drow .num{white-space:nowrap}
+@media (max-width:560px){.drow{grid-template-columns:76px 1fr auto}.drow .name{font-size:13px}}
+</style></head>
+<body><div class="wrap">
+<header>
+  <div><div class="eyebrow">River DMS · PDI master</div><h1 id="headline"></h1><div class="sub" id="sub"></div></div>
+  <button class="theme" id="theme" type="button" aria-label="Toggle dark mode">◐ Theme</button>
+</header>
+<section class="tiles" id="tiles"></section>
+<section class="card">
+  <h2>Day-wise outcome</h2><div class="hint">Latest result per chassis for each day. Click a day to filter the tables below; hover a segment for its count.</div>
+  <div class="legend" id="legend"></div>
+  <div id="dayrows"></div>
+</section>
+<section class="card">
+  <h2>Chassis updated by dealer, day-wise</h2><div class="hint">Dealers with at least one blank chassis in these days. Sorted by total updated.</div>
+  <div class="tablewrap"><table class="dtable"><thead id="dhead"></thead><tbody id="dbody"></tbody></table></div>
+</section>
+<section class="card">
+  <h2>Chassis details</h2>
+  <div class="filters" id="outcomeFilters"></div>
+  <div class="filters"><input type="search" id="q" placeholder="Search dealer, chassis, engine, battery, charger or status…"><span class="count" id="count"></span></div>
+  <div class="tablewrap"><table><thead><tr id="thead"></tr></thead><tbody id="tbody"></tbody></table></div>
+</section>
+<div class="sub">Generated ${esc(data.generated)} · from Output/PDI_Daily_&lt;day&gt;.xlsx</div>
+</div>
+<div id="tip" role="tooltip"></div>
+<script>
+const D = ${json};
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const O = Object.fromEntries(D.outcomes.map((o) => [o.key, o]));
+const cssVar = { updated: 'var(--good)', dryrun: 'var(--info)', missing: 'var(--warn)', error: 'var(--crit)' };
+const state = { day: null, outcomes: new Set(), q: '', sort: { key: 'day', dir: -1 } };
+const fmtDay = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' });
+
+try { const t = localStorage.getItem('pdi-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+$('theme').onclick = () => {
+  const dark = getComputedStyle(document.documentElement).colorScheme === 'dark';
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+  try { localStorage.setItem('pdi-theme', document.documentElement.dataset.theme); } catch {}
+};
+
+// Per-day counts, and per-chassis latest outcome across all days (a chassis can be blank on several days).
+const byDay = D.days.map((day) => {
+  const rows = D.rows.filter((r) => r.day === day);
+  const counts = { updated: 0, dryrun: 0, missing: 0, error: 0 };
+  rows.forEach((r) => counts[r.outcome]++);
+  return { day, total: rows.length, counts };
+});
+const latest = new Map();
+D.rows.forEach((r) => latest.set(r.dealer + '|' + r.chassis, r));
+const updatedChassis = new Set(D.rows.filter((r) => r.outcome === 'updated').map((r) => r.dealer + '|' + r.chassis));
+const open = [...latest.values()].filter((r) => r.outcome !== 'updated');
+const openOf = (k) => open.filter((r) => r.outcome === k).length;
+
+const range = D.days.length ? fmtDay(D.days[0]) + (D.days.length > 1 ? ' – ' + fmtDay(D.days[D.days.length - 1]) : '') : 'no days yet';
+$('headline').textContent = updatedChassis.size + ' chassis updated in the last ' + D.days.length + ' day(s)';
+$('sub').textContent = range + ' · ' + latest.size + ' distinct blank chassis seen';
+
+const tiles = [
+  { v: updatedChassis.size, l: 'Chassis updated', a: 'var(--good)', p: 'across ' + D.days.length + ' day(s)' },
+  { v: latest.size, l: 'Blank chassis found', a: 'var(--brand)', p: 'distinct chassis, all days' },
+  { v: openOf('missing'), l: 'Still no usable VIN data', a: 'var(--warn)', p: 'latest result per chassis' },
+  { v: openOf('error'), l: 'Still erroring', a: 'var(--crit)', p: 'latest result per chassis' },
+];
+$('tiles').innerHTML = tiles.map((t) => '<div class="tile" style="--accent:' + t.a + '"><div class="v">' + t.v + '</div><div class="l">' + esc(t.l) + '</div><div class="p">' + esc(t.p) + '</div></div>').join('');
+
+const shown = D.outcomes.filter((o) => byDay.some((d) => d.counts[o.key] > 0));
+$('legend').innerHTML = shown.map((o) => '<span><i style="background:' + cssVar[o.key] + '"></i>' + esc(o.icon + ' ' + o.label) + '</span>').join('');
+
+const tip = $('tip');
+const showTip = (e, text) => { tip.textContent = text; tip.style.opacity = 1; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY + 12) + 'px'; };
+const hideTip = () => { tip.style.opacity = 0; };
+
+function renderDays() {
+  const max = Math.max(1, ...byDay.map((d) => d.total));
+  $('dayrows').innerHTML = byDay.length ? [...byDay].reverse().map((d) => {
+    const bar = d.total ? '<div class="bar" style="width:' + (d.total / max) * 100 + '%">' + D.outcomes.filter((o) => d.counts[o.key])
+      .map((o) => '<span data-tip="' + esc(fmtDay(d.day) + ' · ' + o.label + ': ' + d.counts[o.key]) + '" style="flex:' + d.counts[o.key] + ';background:' + cssVar[o.key] + '"></span>').join('') + '</div>'
+      : '<div class="none">No blank chassis</div>';
+    return '<div class="drow' + (state.day === d.day ? ' sel' : '') + '" data-day="' + d.day + '" role="button" tabindex="0" aria-pressed="' + (state.day === d.day) + '">' +
+      '<div class="name">' + esc(fmtDay(d.day)) + '</div><div>' + bar + '</div><div class="num"><b style="color:var(--ink)">' + d.counts.updated + '</b> updated / ' + d.total + '</div></div>';
+  }).join('') : '<div class="none">No PDI days in the master yet.</div>';
+  document.querySelectorAll('.drow').forEach((el) => {
+    const pick = () => { state.day = state.day === el.dataset.day ? null : el.dataset.day; renderAll(); };
+    el.onclick = pick;
+    el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } };
+  });
+  document.querySelectorAll('.bar span').forEach((s) => { s.onmousemove = (e) => showTip(e, s.dataset.tip); s.onmouseleave = hideTip; });
+}
+
+function renderDealerTable() {
+  const days = state.day ? [state.day] : [...D.days].reverse();
+  const dealers = [...new Set(D.rows.map((r) => r.dealer))];
+  const upd = (dealer, day) => D.rows.filter((r) => r.dealer === dealer && r.day === day && r.outcome === 'updated').length;
+  const blank = (dealer) => D.rows.filter((r) => r.dealer === dealer && days.includes(r.day)).length;
+  const lines = dealers.map((dealer) => ({ dealer, per: days.map((day) => upd(dealer, day)), blank: blank(dealer) }))
+    .filter((l) => l.blank)
+    .map((l) => ({ ...l, total: l.per.reduce((a, b) => a + b, 0) }))
+    .sort((a, b) => b.total - a.total || a.dealer.localeCompare(b.dealer, undefined, { numeric: true }));
+  const cell = (n) => '<td class="n' + (n ? '' : ' zero') + '">' + n + '</td>';
+  $('dhead').innerHTML = '<tr><th>Dealer</th>' + days.map((d) => '<th class="n">' + esc(fmtDay(d)) + '</th>').join('') + '<th class="n">Total updated</th><th class="n">Blank found</th></tr>';
+  const colTotal = days.map((_, i) => lines.reduce((a, l) => a + l.per[i], 0));
+  $('dbody').innerHTML = lines.length
+    ? lines.map((l) => '<tr><td><b>' + esc(l.dealer) + '</b></td>' + l.per.map(cell).join('') + cell(l.total) + cell(l.blank) + '</tr>').join('') +
+      '<tr class="tot"><td>All dealers</td>' + colTotal.map(cell).join('') + cell(colTotal.reduce((a, b) => a + b, 0)) + cell(lines.reduce((a, l) => a + l.blank, 0)) + '</tr>'
+    : '<tr><td colspan="' + (days.length + 3) + '" class="none" style="text-align:center;padding:20px">No blank chassis.</td></tr>';
+}
+
+function renderOutcomeFilters() {
+  $('outcomeFilters').innerHTML = '<button class="chip" data-o="" aria-pressed="' + (state.outcomes.size === 0) + '">All</button>' +
+    shown.map((o) => '<button class="chip" data-o="' + o.key + '" aria-pressed="' + state.outcomes.has(o.key) + '">' + esc(o.icon + ' ' + o.label) + '</button>').join('') +
+    (state.day ? '<button class="chip" data-clear-day aria-pressed="true">' + esc(fmtDay(state.day)) + ' ✕</button>' : '');
+  document.querySelectorAll('#outcomeFilters .chip').forEach((b) => b.onclick = () => {
+    if (b.hasAttribute('data-clear-day')) { state.day = null; renderAll(); return; }
+    if (!b.dataset.o) state.outcomes.clear();
+    else state.outcomes.has(b.dataset.o) ? state.outcomes.delete(b.dataset.o) : state.outcomes.add(b.dataset.o);
+    renderTable();
+  });
+}
+
+const COLS = [
+  { key: 'day', label: 'Day' }, { key: 'dealer', label: 'Dealer' }, { key: 'chassis', label: 'Chassis No', mono: true }, { key: 'blank', label: 'Was blank' },
+  { key: 'engine', label: 'Engine No', mono: true }, { key: 'battery', label: 'Battery', mono: true }, { key: 'charger', label: 'Charger', mono: true },
+  { key: 'status', label: 'Result' },
+];
+function renderTable() {
+  renderOutcomeFilters();
+  const q = state.q.toLowerCase();
+  const rows = D.rows.filter((r) => (!state.day || r.day === state.day) && (!state.outcomes.size || state.outcomes.has(r.outcome)) &&
+    (!q || Object.values(r).some((v) => String(v).toLowerCase().includes(q))))
+    .sort((a, b) => String(a[state.sort.key]).localeCompare(String(b[state.sort.key]), undefined, { numeric: true }) * state.sort.dir);
+  $('thead').innerHTML = COLS.map((c) => '<th data-k="' + c.key + '">' + c.label + (state.sort.key === c.key ? (state.sort.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>').join('');
+  document.querySelectorAll('#thead th').forEach((th) => th.onclick = () => {
+    state.sort = { key: th.dataset.k, dir: state.sort.key === th.dataset.k ? -state.sort.dir : 1 }; renderTable();
+  });
+  $('tbody').innerHTML = rows.length ? rows.map((r) => '<tr>' + COLS.map((c) => {
+    if (c.key === 'day') return '<td style="white-space:nowrap">' + esc(fmtDay(r.day)) + '</td>';
+    if (c.key === 'status') return '<td class="st"><span style="color:' + cssVar[r.outcome] + '">' + O[r.outcome].icon + '</span> <b>' + esc(O[r.outcome].label) + '</b>' +
+      (r.outcome !== 'updated' || /\\(/.test(r.status) ? '<div style="color:var(--ink2);font-size:12px;white-space:normal">' + esc(r.status) + '</div>' : '') + '</td>';
+    return '<td' + (c.mono ? ' class="mono"' : '') + '>' + esc(r[c.key] || '—') + '</td>';
+  }).join('') + '</tr>').join('') : '<tr><td colspan="' + COLS.length + '" style="color:var(--ink3);text-align:center;padding:24px">No chassis match these filters.</td></tr>';
+  $('count').textContent = rows.length + ' of ' + D.rows.length + ' rows';
+}
+
+function renderAll() { renderDays(); renderDealerTable(); renderTable(); }
+$('q').oninput = (e) => { state.q = e.target.value; renderTable(); };
+renderAll();
+</script></body></html>`;
+}
+
+// Saves the master dashboard next to the master Excel (same name, .html).
+export function writePdiMasterDashboard(days: { day: string; rows: ResultRow[] }[], masterFile: string): void {
+  const file = masterFile.replace(/\.xlsx$/i, '.html');
+  try {
+    fs.writeFileSync(file, buildMasterDashboardHtml(days, new Date()));
+    console.log(`[STEP] PDI master dashboard saved to ${file}`);
+  } catch (err) {
+    console.log(`[WARN] Could not save the PDI master dashboard: ${String((err as Error).message).slice(0, 120)}`);
+  }
+}
+
 // ---------------------------------------------------------------- send
 
 // A run passes only when every blank chassis was updated (or filled, in a dry run) and no dealer
@@ -354,11 +586,9 @@ export function problemsOf(results: ResultRow[], failed: FailedDealer[], dryRun:
   ];
 }
 
-// Uses the same GMAIL_USER / GMAIL_APP_PASSWORD / GMAIL_TO / GMAIL_CC settings as the other reports.
-// Set PDI_SEND_EMAIL=0 to skip. Never throws: a mail problem must not fail the update run.
-export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[], meta: ReportMeta, excelFile: string): Promise<void> {
-  const summary = summarize(results, meta, failed);
-  const dashboard = buildDashboardHtml(summary, results, meta);
+// Saves the interactive dashboard next to the Excel (same name, .html) and returns its HTML.
+export function writePdiDashboard(results: ResultRow[], failed: FailedDealer[], meta: ReportMeta, excelFile: string): string {
+  const dashboard = buildDashboardHtml(summarize(results, meta, failed), results, meta);
   const dashboardFile = excelFile.replace(/\.xlsx$/i, '.html');
   try {
     fs.writeFileSync(dashboardFile, dashboard);
@@ -366,9 +596,18 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
   } catch (err) {
     console.log(`[WARN] Could not save the dashboard: ${String((err as Error).message).slice(0, 120)}`);
   }
+  return dashboard;
+}
+
+// Uses the same GMAIL_USER / GMAIL_APP_PASSWORD / GMAIL_TO / GMAIL_CC settings as the other reports.
+// Set PDI_SEND_EMAIL=0 to skip. Never throws: a mail problem must not fail the update run.
+// Returns true when the email went out.
+export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[], meta: ReportMeta, excelFile: string): Promise<boolean> {
+  const summary = summarize(results, meta, failed);
+  writePdiDashboard(results, failed, meta, excelFile); // kept in Output/ for local use, not emailed
   if (process.env.PDI_SEND_EMAIL === '0') {
     console.log('[STEP] PDI_SEND_EMAIL=0 — report email skipped.');
-    return;
+    return false;
   }
   // Sent whether or not the run fully passed: problems are listed under "Needs attention" and
   // flagged in the subject.
@@ -378,7 +617,7 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
   const to = process.env.GMAIL_TO || user;
   if (!user || !pass || !to) {
     console.log('[STEP] Report email skipped — GMAIL_USER / GMAIL_APP_PASSWORD not set in .env.');
-    return;
+    return false;
   }
 
   const t = totals(summary);
@@ -390,6 +629,11 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
   const review = process.env.PDI_EMAIL_REVIEW === '1';
   const cc = meta.dryRun || review ? '' : [process.env.PDI_CC, process.env.GMAIL_CC].filter(Boolean).join(', ');
   if (review) subject = `[REVIEW] ${subject}`;
+  // The daily email also carries PDI_Master.xlsx (Tracking sheet + last 3 days) when it exists. Only
+  // Excel files are attached; the HTML dashboards stay in Output/.
+  const master = path.basename(excelFile).startsWith('PDI_Daily_')
+    ? [path.join(path.dirname(excelFile), 'PDI_Master.xlsx')].filter((f) => fs.existsSync(f))
+    : [];
   try {
     await nodemailer.createTransport({ service: 'gmail', auth: { user, pass } }).sendMail({
       from: user,
@@ -397,15 +641,17 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
       ...(cc ? { cc } : {}),
       subject,
       text: summary.map((s) => `${s.dealer}: ${s.failed ? 'FAILED — ' + s.failed : `${s.counts.updated + s.counts.dryrun}/${s.total} done, ${s.counts.missing} not in VIN sheet, ${s.counts.error} error(s)`}`).join('\n'),
-      html: buildEmailHtml(summary, results, meta),
+      html: buildEmailHtml(summary, results, meta, master.length > 0),
       attachments: [
-        { filename: 'PDI_Dashboard.html', content: dashboard, contentType: 'text/html' },
         { filename: path.basename(excelFile), path: excelFile },
+        ...master.map((file) => ({ filename: path.basename(file), path: file })),
       ],
     });
     console.log(`[STEP] Report emailed to ${to}${cc ? ` (cc ${cc})` : ''}.`);
+    return true;
   } catch (err) {
     console.log(`[WARN] Could not send the report email: ${String((err as Error).message).slice(0, 150)}`);
+    return false;
   }
 }
 

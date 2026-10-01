@@ -3,8 +3,9 @@ import * as XLSX from 'xlsx';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { LoginPage, UserCredentials } from './models/LoginPage';
-import { sendPdiReport, problemsOf, FailedDealer, vinFilePath } from './utils/pdiReport';
+import { writePdiDashboard, problemsOf, outcomeOf, FailedDealer, vinFilePath } from './utils/pdiReport';
 import { writePdiWorkbook } from './utils/pdiWorkbook';
+import { buildPdiDaily, localDate, RUNS_DIR } from './utils/pdiDaily';
 
 // PDI blank-detail fix-up, for every dealer in PIDDealerCodes / PIDUsers (credentials.json), PDI_PARALLEL at a time:
 //   1. WORKSHOP -> PDI: find grid rows with a blank field (usually EngineNo) and save their chassis numbers.
@@ -20,11 +21,13 @@ import { writePdiWorkbook } from './utils/pdiWorkbook';
 //   PDI_LOAD_TIMEOUT_S  longest wait for Show / Save to reload the page (default 30)
 //   PDI_SHOW_WAIT_S seconds to wait after clicking Show on the PDI Due List (default 30)
 //   PDI_REFRESHES extra Show clicks when the PDI Due List says "Displaying : 0" (default 2)
-//   PDI_SEND_EMAIL 0 = don't email the per-dealer report (it uses the GMAIL_* settings in .env)
+//
+// A run sends no email. It saves its own result file in Output/PDI runs/ and refreshes the day's single
+// copy, Output/PDI_Daily_<date>.xlsx + .html, plus Output/PDI_Master.xlsx + .html (Tracking sheet and the
+// last 3 days) and the all-time history Output/PDI_History.json; npm run report:pdi-daily emails it once a day.
 const CREDENTIALS_FILE = process.env.CREDENTIALS_FILE || path.join(__dirname, '..', 'resources', 'credentials.json');
 const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
 const VIN_FILE = vinFilePath();
-const OUTPUT_DIR = process.env.GSTR_OUTPUT_DIR || path.join(process.cwd(), 'Output');
 const DRY_RUN = process.env.PDI_DRY_RUN === '1';
 const EDIT_REASON = 'Details updated';
 const PDI_TOP = Number(process.env.PDI_TOP || 500); // rows to list on the PDI page (the page's own default is 25)
@@ -138,14 +141,14 @@ async function readBlankPdiRows(page: Page): Promise<BlankRow[]> {
   return blank;
 }
 
-// All dealers' rows go into one formatted workbook: Output/PDI_BlankChassis_<date-time>.xlsx (Summary,
-// one row per chassis, and a "Dealers" sheet listing every dealer checked, including ones with no blank
-// rows, so the daily report (tests/PDIDailyReport.spec.ts) can show them and spot earlier errors that a
-// later run cleared).
+// All dealers' rows go into one formatted workbook: Output/PDI runs/PDI_BlankChassis_<date-time>.xlsx
+// (Summary, one row per chassis, and a "Dealers" sheet listing every dealer checked, including ones with
+// no blank rows, so the day's merge (tests/utils/pdiDaily.ts) can show them and spot earlier errors that
+// a later run cleared).
 async function saveResults(results: ResultRow[], dealersChecked: ResultRow[], dealers: string[], failures: FailedDealer[]): Promise<string> {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  return writePdiWorkbook(path.join(OUTPUT_DIR, `PDI_BlankChassis_${stamp}.xlsx`), {
+  fs.mkdirSync(RUNS_DIR, { recursive: true });
+  return writePdiWorkbook(path.join(RUNS_DIR, `PDI_BlankChassis_${stamp}.xlsx`), {
     title: 'PDI vehicle details',
     subtitle: `${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })} · ${dealers.length} dealer(s) · VIN sheet: ${path.basename(VIN_FILE)}`,
     dryRun: DRY_RUN, dealers, failed: failures, rows: results, rowsSheet: 'PDI Blank Chassis', dealersSheet: dealersChecked,
@@ -480,13 +483,30 @@ test.describe('PDI', () => {
     }
     if (clean.length) console.log(`\n[RESULT] No blank PDI rows (${clean.length} dealers): ${clean.join(', ')}`);
 
-    // One combined report for every dealer in the run, emailed whether or not there were problems.
-    await sendPdiReport(results, failures, {
-      dryRun: DRY_RUN, startedAt, finishedAt: new Date(), dealers: order, vinFile: VIN_FILE,
-    }, file);
+    // No email here. A real run refreshes the day's single copy (every run so far today, latest result
+    // per chassis); a dry run saved nothing, so it only gets its own dashboard next to its run file.
+    if (DRY_RUN) {
+      writePdiDashboard(results, failures, { dryRun: true, startedAt, finishedAt: new Date(), dealers: order, vinFile: VIN_FILE }, file);
+    } else {
+      try {
+        const daily = await buildPdiDaily(localDate(startedAt));
+        if (daily) writePdiDashboard(daily.results, daily.failures, daily.meta, daily.file);
+      } catch (err) {
+        console.log(`[WARN] Day's PDI copy not refreshed: ${(err as Error).message}`);
+      }
+      console.log('[STEP] No email sent — run npm run report:pdi-daily after the day\'s last PDI run to email the day\'s report once.');
+    }
 
-    // Fail (red) unless every blank chassis was updated; the email above lists what needs attention.
-    const problems = problemsOf(results, failures, DRY_RUN);
+    // A chassis with no data in the VIN Details sheet is a data gap, not a test failure: report it
+    // plainly (the daily report lists it too). Fail (red) only for real errors.
+    const noData = results.filter((r) => outcomeOf(r) === 'missing');
+    if (noData.length) {
+      const dealersMissing = [...new Set(noData.map((r) => r.Dealer!))];
+      console.log(`\n[RESULT] No data found in the VIN Details sheet (${path.basename(VIN_FILE)}) for ${noData.length} chassis — not updated. ` +
+        `Add these VINs to the sheet, then rerun with PDI_DEALER=${dealersMissing.join(',')}`);
+      noData.forEach((r) => console.log(`   ${r.Dealer} ${r.ChassisNo}: ${r.Status}`));
+    }
+    const problems = problemsOf(results.filter((r) => outcomeOf(r) !== 'missing'), failures, DRY_RUN);
     if (problems.length) {
       const rerun = [...new Set([...failedDealers, ...results.filter((r) => problems.some((p) => p.startsWith(`${r.Dealer} ${r.ChassisNo}:`))).map((r) => r.Dealer!)])];
       throw new Error(`${problems.length} problem(s). Rerun with PDI_DEALER=${rerun.join(',')}\n  ${problems.slice(0, 20).join('\n  ')}`);
