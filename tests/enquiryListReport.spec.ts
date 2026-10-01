@@ -9,7 +9,7 @@ import * as path from 'node:path';
 const credentials = JSON.parse(fs.readFileSync(
   process.env.CREDENTIALS_FILE || path.join(__dirname, '..', 'resources', 'credentials.json'), 'utf8'));
 
-// Report range: 7 to 29 September 2026, unless ENQ_FROM / ENQ_TO (dd-mm-yyyy) are set.
+// Report range: 7 September 2026 to yesterday, unless ENQ_FROM / ENQ_TO (dd-mm-yyyy) are set.
 function parseDateEnv(name: string, fallback: Date): Date {
   const v = process.env[name];
   if (!v) return fallback;
@@ -18,7 +18,8 @@ function parseDateEnv(name: string, fallback: Date): Date {
   return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
 }
 const REPORT_FROM = parseDateEnv('ENQ_FROM', new Date(2026, 8, 7)); // months are 0-based: 8 = September
-const REPORT_TO = parseDateEnv('ENQ_TO', new Date(2026, 8, 29));
+const yesterday = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1); })();
+const REPORT_TO = parseDateEnv('ENQ_TO', yesterday);
 if (REPORT_FROM > REPORT_TO) throw new Error('ENQ_FROM is after ENQ_TO.');
 const OUTPUT_DIR = process.env.ENQ_OUTPUT_DIR || path.join(process.cwd(), 'Output');
 const dateLabel = (d: Date) =>

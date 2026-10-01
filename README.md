@@ -89,7 +89,7 @@ All optional. See `.env.example`.
 | `GSTR_FROM`, `GSTR_TO` | GSTR | Report dates (dd-mm-yyyy) |
 | `GSTR_OUTPUT_DIR` | GSTR | Output folder (default `Output/`) |
 | `GSTR_RERUN_ALL` | GSTR | `1` = don't reuse saved dealers |
-| `ENQ_FROM`, `ENQ_TO` | Enquiry List | Report dates (dd-mm-yyyy); default 07-09-2026 to 29-09-2026 |
+| `ENQ_FROM`, `ENQ_TO` | Enquiry List | Report dates (dd-mm-yyyy); default 07-09-2026 to yesterday |
 | `PDI_TOP` | PDI | Vehicles to list on the PDI page (default 500) |
 | `PDI_PARALLEL` | PDI | Dealers processed at once, each in its own browser window (default 3; `1` = one at a time) |
 | `PDI_LOAD_TIMEOUT_S` | PDI | Longest wait for Show / Save to reload the page (default 30) |

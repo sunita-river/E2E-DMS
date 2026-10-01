@@ -110,7 +110,7 @@ Always do `npm run test:pdi:dry` first, then `npm run test:pdi` to save.
 | `PDI_LOAD_TIMEOUT_S` | Longest wait for a vehicle to load after Show / Save (default 30) |
 | `PDI_VIN_FILE` | Use a different VIN sheet |
 | `PDI_REPORT_DATE` | Daily report for another day (yyyy-mm-dd) |
-| `ENQ_FROM`, `ENQ_TO` | Enquiry List dates (dd-mm-yyyy); default 07-09-2026 to today |
+| `ENQ_FROM`, `ENQ_TO` | Enquiry List dates (dd-mm-yyyy); default 07-09-2026 to yesterday |
 | `GSTR_FROM`, `GSTR_TO` | GSTR dates (dd-mm-yyyy) |
 | `BROWSER_CHANNEL` | `msedge` to use Microsoft Edge instead of Chrome |
 
