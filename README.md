@@ -4,7 +4,7 @@ End-to-end Playwright automation for **River DMS** (`rivermobility.gaindms.com`)
 
 | Script | What it does | Output |
 |---|---|---|
-| `tests/enquiryListReport.spec.ts` | Dealer login → Enquiry List (full list, every row). Checks the key columns are present, every row has a Dealer Code, Lead No and Created Date, and every Created Date is inside the date range | `Output/Enquiry_List_<from>_<to>.xlsx` |
+| `tests/enquiryListReport.spec.ts` | Dealer login → Enquiry List (full list, every row), then **Product-wise Sales Details** by Invoice date and by Booking date in the same session. Checks each report's columns, blanks and dates, counts dealers, and builds an Enquiry / Invoice / Booking summary by date and dealer (bookings counted once by Booking No) whose totals must match the reports | `Output/Enquiry_List_<from>_<to>.xlsx`, `Output/Enquiry_Summary_<from>_<to>.xlsx` (By Date, By Dealer, By Date and Dealer); the per-day table is pasted into the run email |
 | `tests/GSTR Report.spec.ts` | For every dealer in `credentials.json`: GSTR ProductWise Sales Details, plus the **Post GST Discount** read from each Product Sale invoice PDF | `Output/<dealer>_SalesGSTNReport_<from>_<to>.xlsx` and `MasterData_…xlsx` |
 | `tests/PDI.spec.ts` | For every PDI dealer (`PIDDealerCodes` / `PIDUsers`): finds **WORKSHOP → PDI** rows with a blank field and fills Engine / Battery / Charger from the VIN Details sheet in **Settings → Admin → Modify vehicle details** | one copy per day, `Output/PDI_Daily_<date>.xlsx` + dashboard, refreshed by every run (each run's own file goes to `Output/PDI runs/`); no email per run |
 | `tests/Automation for Testing.spec.ts` | **Stage DMS only** (`credentials.stageUser`): River User login → create enquiry → follow-up → booking → ₹5,000 receipt, checking each step's fields and saved records. Each run leaves new records on stage | Playwright report only |
@@ -37,7 +37,7 @@ cd E2E-DMS
 ## Running
 
 ```powershell
-npm run test:enquiry-list      # Enquiry List (~1-2 min)
+npm run test:enquiry-list      # Enquiry List + Product-wise Sales Invoice / Booking + summary (~3 min)
 npm run test:gstr              # GSTR Report, all dealers (~15-60 min)
 npm run test:stage             # Stage DMS: login, enquiry, follow-up, booking, receipt (creates records on stage)
 npm run test:pdi:dry           # PDI: fill the form for every blank chassis, don't Save

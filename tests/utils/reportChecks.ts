@@ -3,11 +3,15 @@
 
 type Row = Record<string, string>;
 
-// Report dates come as "07-09-2026 00:00:00" (grid), "07-09-2026 00:00" (1000+ row Excel path)
-// or "02/09/2026" (GSTR grid). Returns null if the value isn't a dd-mm-yyyy / dd/mm/yyyy date.
+// Report dates come as "07-09-2026 00:00:00" (grid), "07-09-2026 00:00" (1000+ row Excel path),
+// "02/09/2026" (GSTR grid) or, since early Oct 2026, "07-Sep-2026" (Enquiry List Excel export).
+// Returns null if the value isn't one of those.
+const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 export function parseReportDate(value: string): Date | null {
-  const m = String(value).trim().match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-  return m ? new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : null;
+  const m = String(value).trim().match(/^(\d{1,2})[-/ ](\d{1,2}|[A-Za-z]{3})[-/ ](\d{4})/);
+  if (!m) return null;
+  const month = /^\d+$/.test(m[2]!) ? Number(m[2]) - 1 : MONTH_ABBR.indexOf(m[2]!.toLowerCase());
+  return month < 0 || month > 11 ? null : new Date(Number(m[3]), month, Number(m[1]));
 }
 
 const toNumber = (value: string) => Number(String(value).replace(/,/g, '').trim());

@@ -3,7 +3,7 @@
 Automated checks and data fixes for **River DMS** (rivermobility.gaindms.com), built with Playwright. Each automation logs in to the live DMS, does its job, saves the results to Excel and emails a summary.
 
 - **Repository:** https://github.com/sunita-river/E2E-DMS
-- **Test cases:** `Test Cases/DMS_Automation_Test_Cases.xlsx` in the repository (97 cases, 94 passed; PDI-29 and PDI-30 await the email review, PDI-33 awaits a live run)
+- **Test cases:** `Test Cases/DMS_Automation_Test_Cases.xlsx` in the repository (101 cases, 98 passed; ENQ-14 awaits an emailed run, PDI-29 and PDI-30 the email review, PDI-33 a live run)
 - **Owner:** Sunita Sahu
 
 ---
@@ -143,12 +143,12 @@ No variables are needed. Then go to **Actions → DMS Automation → Run workflo
 
 | Area | Cases | Positive | Negative | Edge | Passed |
 |---|---|---|---|---|---|
-| Enquiry List | 16 | 14 | 1 | 1 | 16 |
+| Enquiry List | 20 | 17 | 1 | 2 | 19 |
 | GSTR Report | 20 | 10 | 5 | 5 | 20 |
 | MIS Report Check | 23 | 12 | 7 | 4 | 23 |
 | PDI Vehicle Details | 33 | 19 | 9 | 5 | 30 |
 | Stage DMS Flow | 5 | 5 | 0 | 0 | 5 |
-| **Total** | **97** | **60** | **22** | **15** | **94** |
+| **Total** | **101** | **63** | **22** | **16** | **98** |
 
 PDI negative cases tested include: a missing or placeholder login, an unknown dealer code, a missing VIN sheet, a wrong login, a chassis not in the VIN sheet, an invalid Top setting, a results file left open in Excel, and a day with no runs. The full list with steps and results is in the test case workbook.
 
