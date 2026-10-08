@@ -79,6 +79,7 @@ const RECEIPT = {
 // (e.g. -g TC03) fails with a clear message instead of a timeout.
 const done = { login: false, enquiry: false, followUp: false };
 let bookingNo = '';     // saved by TC04, used by TC05
+const receipt = { no: '', pageUrl: '', customerCenterUrl: '', total: 0 }; // saved by TC05, cancelled by TC06
 
 // Amount boxes may show thousands separators ("1,23,456.00").
 async function amountOf(field: Locator, label: string) {
@@ -143,6 +144,60 @@ async function pickAutosuggest(page: Page, fieldId: string, text: string, label:
   return picked;
 }
 
+// Presales > My Enquiries > New, on a fresh page (after Apply Filter the filter side panel can sit over the buttons).
+async function openNewEnquiry(page: Page) {
+  console.log('[STEP] Opening Presales > My Enquiries > New');
+  // A search that finds nothing can send the page on to the New Enquiry form by itself, which
+  // interrupts this goto ("interrupted by another navigation"). Let that finish, then go again.
+  await page.waitForLoadState('load');
+  await page.goto(`${STAGE_URL}Presale/EnquiryWorksheet.aspx`).catch(async (err) => {
+    if (!/interrupted by another navigation/.test(String(err))) throw err;
+    await page.waitForLoadState('load');
+    await page.goto(`${STAGE_URL}Presale/EnquiryWorksheet.aspx`);
+  });
+  await page.locator('#ctl00_cpMain_cmdNew').click();
+  await expect(page).toHaveURL(/Presale\/Enquiry\.aspx/i);
+  await expect(page.locator('#ctl00_cpMain_EnquiryName')).toHaveValue('');
+  await expect(page.locator('#ctl00_cpMain_CmdEnqSave')).toBeVisible();
+}
+
+// Fills every mandatory field of the New Enquiry form from `data` (the validation tests pass a copy
+// of ENQUIRY with one field made wrong).
+async function fillEnquiryForm(page: Page, data: typeof ENQUIRY) {
+  // Primary DataSource posts back to load the Secondary DataSource list.
+  await page.locator('#ctl00_cpMain_DataSourceCategorySlno').selectOption({ label: data.primarySource });
+  await page.waitForLoadState('domcontentloaded');
+  await expect(page.locator('#ctl00_cpMain_DatasourceSlno option', { hasText: data.secondarySource }).first()).toBeAttached({ timeout: 30000 });
+  await page.locator('#ctl00_cpMain_DatasourceSlno').selectOption({ label: data.secondarySource });
+  await page.waitForLoadState('domcontentloaded');
+
+  console.log(`[STEP] Customer: ${data.name}, ${data.phone}`);
+  await page.locator('#ctl00_cpMain_TitleSlno').selectOption({ label: data.title });
+  await page.locator('#ctl00_cpMain_EnquiryName').fill(data.name);
+  await page.locator('#ctl00_cpMain_PhoneM').fill(data.phone);
+
+  // State labels look like "29(Karnataka)", so match on the name.
+  const stateSelect = page.locator('#ctl00_cpMain_StateSlno');
+  const stateOption = stateSelect.locator('option').filter({ hasText: data.state }).first();
+  await expect(stateOption, `State ${data.state} in the list`).toBeAttached();
+  await stateSelect.selectOption((await stateOption.getAttribute('value'))!);
+  await page.waitForLoadState('domcontentloaded');
+  await pickAutosuggest(page, 'ctl00_cpMain_CityName', data.city, 'City');
+  await page.locator('#ctl00_cpMain_PinCode').fill(data.pinCode);
+
+  await pickAutosuggest(page, 'ctl00_cpMain_Model', data.model, 'Model');
+  await pickAutosuggest(page, 'ctl00_cpMain_Product', data.product, 'Product');
+  await pickAutosuggest(page, 'ctl00_cpMain_Color', data.color, 'Color');
+
+  await page.locator('#ctl00_cpMain_ExpPurchaseTime').selectOption({ label: data.category });
+  await page.locator('#ctl00_cpMain_EnquirySteptosaleSlno').selectOption({ label: data.stepToSale });
+  await page.locator('#ctl00_cpMain_CallBackOnDate').fill(ddmmyyyy(tomorrow));
+  await page.locator('#ctl00_cpMain_CallBackOnDate').press('Tab');
+  await page.locator('#ctl00_cpMain_CallBackOnTime').fill(data.followUpTime);
+  await page.locator('#ctl00_cpMain_CallSummary').fill(data.summary);
+  await page.locator('#ctl00_cpMain_LoanRequired').selectOption({ label: data.loanRequired });
+}
+
 test.describe('Stage DMS - Automation for Testing', () => {
   // Each scenario works on what the one before it saved, so run in order and skip the rest once one fails.
   test.describe.configure({ mode: 'serial' });
@@ -201,46 +256,8 @@ test.describe('Stage DMS - Automation for Testing', () => {
     const before = await searchMyEnquiries(page, ENQUIRY.phone);
     await expect(before, `An enquiry with ${ENQUIRY.phone} already exists`).toContainText('Displaying 0 records');
 
-    // Fresh page: after Apply Filter the filter side panel can sit over the buttons.
-    console.log('[STEP] Opening Presales > My Enquiries > New');
-    await page.goto(`${STAGE_URL}Presale/EnquiryWorksheet.aspx`);
-    await page.locator('#ctl00_cpMain_cmdNew').click();
-    await expect(page).toHaveURL(/Presale\/Enquiry\.aspx/i);
-    await expect(page.locator('#ctl00_cpMain_EnquiryName')).toHaveValue('');
-    await expect(page.locator('#ctl00_cpMain_CmdEnqSave')).toBeVisible();
-
-    // Primary DataSource posts back to load the Secondary DataSource list.
-    await page.locator('#ctl00_cpMain_DataSourceCategorySlno').selectOption({ label: ENQUIRY.primarySource });
-    await page.waitForLoadState('domcontentloaded');
-    await expect(page.locator('#ctl00_cpMain_DatasourceSlno option', { hasText: ENQUIRY.secondarySource }).first()).toBeAttached({ timeout: 30000 });
-    await page.locator('#ctl00_cpMain_DatasourceSlno').selectOption({ label: ENQUIRY.secondarySource });
-    await page.waitForLoadState('domcontentloaded');
-
-    console.log(`[STEP] Customer: ${ENQUIRY.name}, ${ENQUIRY.phone}`);
-    await page.locator('#ctl00_cpMain_TitleSlno').selectOption({ label: ENQUIRY.title });
-    await page.locator('#ctl00_cpMain_EnquiryName').fill(ENQUIRY.name);
-    await page.locator('#ctl00_cpMain_PhoneM').fill(ENQUIRY.phone);
-
-    // State labels look like "29(Karnataka)", so match on the name.
-    const stateSelect = page.locator('#ctl00_cpMain_StateSlno');
-    const stateOption = stateSelect.locator('option').filter({ hasText: ENQUIRY.state }).first();
-    await expect(stateOption, `State ${ENQUIRY.state} in the list`).toBeAttached();
-    await stateSelect.selectOption((await stateOption.getAttribute('value'))!);
-    await page.waitForLoadState('domcontentloaded');
-    await pickAutosuggest(page, 'ctl00_cpMain_CityName', ENQUIRY.city, 'City');
-    await page.locator('#ctl00_cpMain_PinCode').fill(ENQUIRY.pinCode);
-
-    await pickAutosuggest(page, 'ctl00_cpMain_Model', ENQUIRY.model, 'Model');
-    await pickAutosuggest(page, 'ctl00_cpMain_Product', ENQUIRY.product, 'Product');
-    await pickAutosuggest(page, 'ctl00_cpMain_Color', ENQUIRY.color, 'Color');
-
-    await page.locator('#ctl00_cpMain_ExpPurchaseTime').selectOption({ label: ENQUIRY.category });
-    await page.locator('#ctl00_cpMain_EnquirySteptosaleSlno').selectOption({ label: ENQUIRY.stepToSale });
-    await page.locator('#ctl00_cpMain_CallBackOnDate').fill(ddmmyyyy(tomorrow));
-    await page.locator('#ctl00_cpMain_CallBackOnDate').press('Tab');
-    await page.locator('#ctl00_cpMain_CallBackOnTime').fill(ENQUIRY.followUpTime);
-    await page.locator('#ctl00_cpMain_CallSummary').fill(ENQUIRY.summary);
-    await page.locator('#ctl00_cpMain_LoanRequired').selectOption({ label: ENQUIRY.loanRequired });
+    await openNewEnquiry(page);
+    await fillEnquiryForm(page, ENQUIRY);
 
     // Everything entered is still on the form (a postback can wipe fields filled before it).
     const f = (id: string) => page.locator(`#ctl00_cpMain_${id}`);
@@ -566,6 +583,7 @@ test.describe('Stage DMS - Automation for Testing', () => {
     expect(alerts, 'Validation alerts on receipt Save').toEqual([]);
     const receiptNo = (await savedMessage.innerText()).match(/Last receipt saved was (\S+)/)?.[1] ?? '';
     expect(receiptNo, 'Receipt number').toMatch(/^\w+$/);
+    Object.assign(receipt, { no: receiptNo, pageUrl: page.url(), customerCenterUrl, total });
     await expect(page).toHaveURL(/Accounts\/Receipt\.aspx/i);
     await expect(f('ReceiptAmount')).toHaveValue(''); // form cleared for the next receipt
     await expect(f('Narration')).toHaveValue('');
@@ -588,5 +606,92 @@ test.describe('Stage DMS - Automation for Testing', () => {
     console.log(`✅ Receipt ${receiptNo} for ₹${RECEIPT.amount} saved against booking ${bookingNo}; balance ₹${(total - RECEIPT.amount).toFixed(2)}`);
   });
 
-     test.fixme('TC06 - Scenario 6', async () => {});
+  // Scenario 6: clean-up, so each run doesn't leave a paid booking behind on stage. The stage River User
+  // can't cancel receipts or bookings yet (both open "You do not have permission"), so this is skipped
+  // with that reason until a DMS admin grants it; then the cancel form steps go here.
+  test('TC06 - Cancel the receipt made in TC05', async () => {
+    expect(receipt.no, 'TC05 must save a receipt first').not.toBe('');
+
+    console.log(`[STEP] Cancelling receipt ${receipt.no}...`);
+    await page.goto(receipt.pageUrl);
+    const row = page.locator('tr').filter({ hasText: receipt.no }).filter({ hasText: bookingNo }).last();
+    await expect(row, `Receipt ${receipt.no} listed on the receipt page`).toBeVisible({ timeout: 30000 });
+    const cancel = row.locator('a[id$="_hReceiptCancel"]');
+    await expect(cancel).toHaveAttribute('href', /ReceiptCancel\.aspx\?receiptslno=\d+/);
+    await cancel.click();
+    await page.waitForLoadState('load');
+
+    const noPermission = /ErrorPage\.aspx\?error=np/i.test(page.url());
+    test.skip(noPermission, `Stage user ${stageUser.username} has no permission to cancel receipts (ReceiptCancel.aspx). ` +
+      `Booking ${bookingNo} and receipt ${receipt.no} stay on stage. Ask the DMS admin for receipt and booking cancel rights.`);
+    throw new Error(`Receipt cancel page opened (${page.url()}): the cancel form steps still need to be written.`);
+  });
+});
+
+// Validation on the New Enquiry form. Nothing here is saved: each case checks the DMS refuses it.
+test.describe('Stage DMS - Enquiry form validation', () => {
+  test.describe.configure({ mode: 'serial' });
+  let page: Page;
+  const alerts: string[] = [];
+  const enquirySavePosts: string[] = [];
+
+  test.beforeAll(async ({ browser }) => {
+    const context = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: null });
+    page = await context.newPage();
+    page.on('dialog', async (dialog) => { alerts.push(dialog.message()); await dialog.accept().catch(() => {}); });
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && (r.postData() || '').includes('CmdEnqSave')) enquirySavePosts.push(r.url());
+    });
+    await loginToStage(page);
+  });
+  test.beforeEach(async () => {
+    await openNewEnquiry(page);
+    alerts.length = 0;
+    enquirySavePosts.length = 0;
+  });
+  test.afterAll(async () => { await page?.context().close(); });
+
+  // Save, then give the alert a moment to appear. Returns the alerts shown.
+  async function saveAndCollectAlerts() {
+    await page.locator('#ctl00_cpMain_CmdEnqSave').click();
+    await expect.poll(() => alerts.length, { timeout: 10000 }).toBeGreaterThan(0);
+    await page.waitForLoadState('load');
+    return alerts.join(' | ');
+  }
+
+  test('TC07 - Enquiry with nothing filled in is refused', async () => {
+    const shown = await saveAndCollectAlerts();
+    expect(shown).toContain('Please select Source of enquiry');
+    await expect(page, 'No enquiry was opened (no keyid)').not.toHaveURL(/keyid=/i);
+    await expect(page.locator('#ctl00_cpMain_EnquiryName')).toHaveValue('');
+  });
+
+  test('TC08 - Enquiry with a 5-digit mobile number is refused', async () => {
+    const phone = '98765';
+    await fillEnquiryForm(page, { ...ENQUIRY, name: `Auto Neg ${runId}`, phone });
+    const shown = await saveAndCollectAlerts();
+    expect(shown).toMatch(/validations are not matching|mobile|phone/i);
+    expect(enquirySavePosts, 'Save must not reach the server').toEqual([]);
+    await expect(page).not.toHaveURL(/keyid=/i);
+    await expect(page.locator('#ctl00_cpMain_PhoneM')).toHaveValue(phone);
+  });
+
+  test('TC09 - Mobile number field does not take letters', async () => {
+    const mobile = page.locator('#ctl00_cpMain_PhoneM');
+    await mobile.fill('abcdefghij');
+    await mobile.press('Tab');
+    await expect(mobile).toHaveValue('');
+  });
+
+  test('TC10 - Mobile number and Pin Code stop at their maximum length', async () => {
+    const mobile = page.locator('#ctl00_cpMain_PhoneM');
+    const pin = page.locator('#ctl00_cpMain_PinCode');
+    await expect(mobile).toHaveAttribute('maxlength', '11');
+    await expect(pin).toHaveAttribute('maxlength', '6');
+    await mobile.pressSequentially('987654321012');
+    await pin.pressSequentially('5600011');
+    await expect(mobile).toHaveValue('98765432101');
+    await expect(pin).toHaveValue('560001');
+  });
+
 });
