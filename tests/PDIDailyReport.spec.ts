@@ -1,7 +1,7 @@
 import { test } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { sendPdiReport, problemsOf } from './utils/pdiReport';
+import { sendPdiReport, problemsOf, outcomeOf } from './utils/pdiReport';
 import { buildPdiDaily, localDate, emailedMarker, OUTPUT_DIR, RUNS_DIR } from './utils/pdiDaily';
 
 // Daily PDI email: the one email of the day for PDI. It rebuilds Output/PDI_Daily_<day>.xlsx from every
@@ -35,6 +35,10 @@ test('Should email the combined PDI report for the day', async () => {
     fs.writeFileSync(marker, `sent ${new Date().toLocaleString('en-IN')}\n`);
   }
 
-  const problems = problemsOf(daily.results, daily.failures, false);
+  // Chassis with no usable VIN data (factory placeholders like "BIN SERIAL DUPLICATION") are a VIN-sheet
+  // issue, listed in the report — a warning here, as in the PDI run. Dealer failures and save errors still fail.
+  const noVin = problemsOf(daily.results.filter((r) => outcomeOf(r) === 'missing'), [], false);
+  if (noVin.length) console.log(`[WARN] ${noVin.length} chassis with no usable VIN data (listed in the report):\n  ${noVin.slice(0, 20).join('\n  ')}`);
+  const problems = problemsOf(daily.results.filter((r) => outcomeOf(r) !== 'missing'), daily.failures, false);
   if (problems.length) throw new Error(`${problems.length} problem(s) today (listed in the report):\n  ${problems.slice(0, 20).join('\n  ')}`);
 });

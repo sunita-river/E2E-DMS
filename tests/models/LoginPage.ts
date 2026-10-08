@@ -38,9 +38,10 @@ export class LoginPage {
     this.riverUserSignInButton = page.locator('#CmdLogin');
   }
 
-  async goto() {
+  // url: defaults to production; the stage specs pass https://stage.rivermobility.gaindms.com/
+  async goto(url = 'https://rivermobility.gaindms.com/') {
     this.log('[STEP 1] Navigating to login page...');
-    await this.page.goto('https://rivermobility.gaindms.com/', { waitUntil: 'domcontentloaded' });
+    await this.page.goto(url, { waitUntil: 'domcontentloaded' });
 
     // The app's legacy ASP.NET report viewer renders blank under Playwright's fixed default
     // viewport (fine in a manually-opened, maximized browser), so the context runs with

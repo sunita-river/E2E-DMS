@@ -8,13 +8,13 @@ import type { PdiHistory } from './pdiHistory';
 // Mail apps strip JavaScript, so the email body is a static (table-based, inline-styled)
 // summary; only Excel files are attached. The interactive dashboards are saved as .html in Output/.
 
-// The VIN Details workbook: PDI_VIN_FILE, else the newest resources/VIN Details*.xlsx, so a renamed
-// or re-downloaded copy ("VIN Details (2).xlsx") is picked up without changing anything.
+// The VIN Details workbook: PDI_VIN_FILE, else the newest resources/VIN*.xlsx, so a renamed or
+// re-downloaded copy ("VIN.xlsx", "VIN Details (2).xlsx") is picked up without changing anything.
 export function vinFilePath(): string {
   if (process.env.PDI_VIN_FILE) return process.env.PDI_VIN_FILE;
   const dir = path.join(__dirname, '..', '..', 'resources');
   const newest = (fs.existsSync(dir) ? fs.readdirSync(dir) : [])
-    .filter((f) => /^VIN Details.*\.xlsx$/i.test(f) && !f.startsWith('~$')) // ~$ = Excel's lock file
+    .filter((f) => /^VIN.*\.xlsx$/i.test(f) && !f.startsWith('~$')) // ~$ = Excel's lock file
     .map((f) => path.join(dir, f))
     .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
   return newest ?? path.join(dir, 'VIN Details.xlsx');

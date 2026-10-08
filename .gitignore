@@ -24,7 +24,7 @@ node_modules/
 resources/credentials.json
 
 # Reference data for the PDI spec (VIN / battery / motor / charger numbers)
-resources/VIN Details*.xlsx
+resources/VIN*.xlsx
 
 # Local tooling
 .claude/
