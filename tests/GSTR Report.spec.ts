@@ -196,6 +196,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
 
 const oneLine = (err: unknown) => String(err instanceof Error ? err.message : err).replace(/\s+/g, ' ').slice(0, 160);
 
+// The report itself is gone from the menu: retrying, or moving on to the next dealer, can't help.
+class ReportMissingError extends Error {}
+
 type DealerCredentials = { dealercode: string; username: string; password: string };
 type ReportRow = Record<string, string> & { ReferenceNo: string };
 
@@ -316,7 +319,12 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
   await page.getByRole('link', { name: 'Accounts Reports' }).click();
   await page.locator('[href="#GSTRReports"]:visible').click();
   const productWiseSalesHeading = page.getByRole('heading', { name: 'ProductWise Sales Details', level: 5 });
-  await productWiseSalesHeading.waitFor({ state: 'visible', timeout: 30000 });
+  await productWiseSalesHeading.waitFor({ state: 'visible', timeout: 30000 }).catch(async () => {
+    const shown = await page.locator('h5:visible').allInnerTexts().catch(() => [] as string[]);
+    throw new ReportMissingError(`"ProductWise Sales Details" is not in MIS > Accounts Reports > GSTR Reports for dealer ` +
+      `${dealer.dealercode}. The page lists: ${shown.join(', ') || 'nothing'}. The DMS removed it from the menu ` +
+      `(first seen 08-Oct-2026); ask the DMS team where it went.`);
+  });
   await productWiseSalesHeading.click();
 
   const gstrReportViewer = new ReportViewerPage(page, {
@@ -487,6 +495,7 @@ test.describe('Vehicle Sales - Sales > Vehicle Sales', () => {
         rowsByDealer.set(dealer.dealercode, await processDealer(page, dealer));
         return true;
       } catch (err) {
+        if (err instanceof ReportMissingError) throw err;
         console.log(`[ERROR] Dealer ${dealer.dealercode} failed (${attemptLabel}): ${oneLine(err)}`);
         await test.info().attach(`${dealer.dealercode}-failure.png`, {
           body: await page.screenshot({ fullPage: true, timeout: 15000 }).catch(() => Buffer.from('')),

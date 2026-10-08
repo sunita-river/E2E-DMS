@@ -58,6 +58,7 @@ $env:BROWSER_CHANNEL='msedge'; npm run test:gstr
 After each Playwright run, `tests/reporters/gmail-reporter.ts` emails the pass/fail status to `GMAIL_TO`. The MIS check sends its own HTML summary with the Excel file attached.
 
 ### GSTR Report details
+- **Blocked since 08-Oct-2026:** the DMS removed *ProductWise Sales Details* from MIS → Accounts Reports → GSTR Reports. The spec stops at once with that message until the report is back or its replacement is known.
 - **Date range:** 01-09-2026 to yesterday by default. Override with `GSTR_FROM` / `GSTR_TO` (dd-mm-yyyy).
 - **Data checks** (after every file is saved, per dealer): required columns present, every InvoiceDate inside the date range, TaxableAmount and TotalAmount are numbers, TotalAmount = Taxable + CGST + SGST + IGST + CESS (within ₹1), Product Sale rows have an InvoiceNo, ReferenceNo, Chassis No and a numeric DiscountAmount, and MasterData has exactly the dealer files' rows. Any failure lists the dealer and the first few rows.
 - **Resumable:** a dealer whose file for the same date range already exists in `Output/` is reused, not re-run. Set `GSTR_RERUN_ALL=1` to redo every dealer.
