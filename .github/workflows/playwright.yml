@@ -28,8 +28,19 @@ jobs:
       GMAIL_CC: ${{ secrets.GMAIL_CC }}
       SUITE: ${{ github.event.inputs.suite || 'all' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Runs first so a DMS that blocks GitHub's servers (firewall / IP allow-list) fails the run
+      # in seconds with a clear message, instead of after installing everything and timing out on login.
+      - name: Check the DMS can be reached from GitHub
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 https://rivermobility.gaindms.com/ || echo 000)
+          echo "DMS answered with HTTP $code"
+          if [ "$code" = "000" ] || [ "$code" -ge 500 ]; then
+            echo "::error::GitHub's servers could not reach https://rivermobility.gaindms.com/ (HTTP $code). Ask the DMS provider to allow GitHub Actions IPs, or run on a self-hosted runner inside the network."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: lts/*
           cache: npm
@@ -51,7 +62,7 @@ jobs:
       # The MIS check compares with the previous run's snapshot (report names + columns only,
       # no customer data), so carry it from one CI run to the next.
       - name: Restore previous MIS snapshot
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: MIS Reports/MIS_Report_Snapshot_*.json
           key: mis-snapshot-${{ github.run_id }}
@@ -62,7 +73,7 @@ jobs:
       # of them (~1 hour). Saved again after the GSTR step, even if it failed partway.
       - name: Restore GSTR discount cache
         if: env.SUITE == 'all' || env.SUITE == 'gstr'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: Output/gstr-discount-cache.json
           key: gstr-discount-cache-${{ github.run_id }}
@@ -77,7 +88,7 @@ jobs:
         run: npx playwright test "tests/GSTR Report.spec.ts"
 
       - name: Save GSTR discount cache for the next run
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         if: ${{ !cancelled() && (env.SUITE == 'all' || env.SUITE == 'gstr') && hashFiles('Output/gstr-discount-cache.json') != '' }}
         with:
           path: Output/gstr-discount-cache.json
@@ -88,7 +99,7 @@ jobs:
         run: node run_mis_check.js
 
       - name: Save MIS snapshot for the next run
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         if: ${{ !cancelled() && (env.SUITE == 'all' || env.SUITE == 'mis-check') }}
         with:
           path: MIS Reports/MIS_Report_Snapshot_*.json
@@ -96,7 +107,7 @@ jobs:
 
       # Reports contain customer data - keep the downloads short-lived.
       - name: Upload GSTR Excel files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: ${{ !cancelled() }}
         with:
           name: gstr-output
@@ -104,7 +115,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: Upload MIS report check
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: ${{ !cancelled() }}
         with:
           name: mis-reports
@@ -112,7 +123,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: Upload Playwright report and results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: ${{ !cancelled() }}
         with:
           name: playwright-results

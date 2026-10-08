@@ -9,6 +9,7 @@
     "test:headed": "playwright test --headed",
     "test:enquiry-list": "playwright test tests/enquiryListReport.spec.ts",
     "test:gstr": "playwright test \"tests/GSTR Report.spec.ts\"",
+    "test:stage": "playwright test \"tests/Automation for Testing.spec.ts\"",
     "test:pdi:dry": "set PDI_RUN=1&& set PDI_DRY_RUN=1&& playwright test tests/PDI.spec.ts --headed",
     "test:pdi": "set PDI_RUN=1&& set PDI_DRY_RUN=&& playwright test tests/PDI.spec.ts --headed",
     "report:pdi-daily": "set PDI_RUN=1&& playwright test tests/PDIDailyReport.spec.ts --reporter=line",

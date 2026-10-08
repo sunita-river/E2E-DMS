@@ -3,7 +3,7 @@
 Automated checks and data fixes for **River DMS** (rivermobility.gaindms.com), built with Playwright. Each automation logs in to the live DMS, does its job, saves the results to Excel and emails a summary.
 
 - **Repository:** https://github.com/sunita-river/E2E-DMS
-- **Test cases:** `Test Cases/DMS_Automation_Test_Cases.xlsx` in the repository (83 cases, all passed)
+- **Test cases:** `Test Cases/DMS_Automation_Test_Cases.xlsx` in the repository (97 cases, 94 passed; PDI-29 and PDI-30 await the email review, PDI-33 awaits a live run)
 - **Owner:** Sunita Sahu
 
 ---
@@ -15,7 +15,7 @@ Automated checks and data fixes for **River DMS** (rivermobility.gaindms.com), b
 | Enquiry List | Dealer login → Enquiry List, then Product-wise Sales Details (Invoice and Booking date types) → combined Enquiry / Invoice / Booking summary by date and dealer | No | Summary tables and a CSV |
 | GSTR Report | For every dealer: GSTR ProductWise Sales Details plus the Post GST Discount read from each Product Sale invoice PDF | No | One Excel per dealer + a MasterData Excel |
 | MIS Report Check | Opens every report under every MIS page (~274), classifies each (OK / server error / timeout / blank / needs input) and compares with the previous run | No | Formatted Excel + email summary |
-| PDI Vehicle Details | For every PDI dealer: finds vehicles in WORKSHOP → PDI with a blank field and fills Engine / Battery / Charger from the VIN Details sheet in Settings → Admin → Modify vehicle details | **Yes** | Excel + interactive dashboard, one combined email per run |
+| PDI Vehicle Details | For every PDI dealer: finds vehicles in WORKSHOP → PDI with a blank field and fills Engine / Battery / Charger from the VIN Details sheet in Settings → Admin → Modify vehicle details | **Yes** | Excel + interactive dashboard, one combined email per day |
 
 ---
 
@@ -85,7 +85,7 @@ A run **passes** only when every blank chassis was updated and no dealer failed.
 |---|---|
 | `resources/credentials.json` | Dealer logins: `dealervalidUser` (Enquiry List, MIS), `dealerUsers` (GSTR), `PIDLogin` + `PIDDealerCodes` and `PIDUsers` (PDI) |
 | `.env` | Gmail sender, App Password, recipient, and the PDI CC list |
-| `resources/VIN Details.xlsx` (any `VIN Details….xlsx` name; the newest is used) | The manufacturer's VIN sheet (A = VIN, B = Battery No, C = Motor No, D = Charger) |
+| `resources/VIN Details.xlsx` (any `VIN….xlsx` name, e.g. `VIN.xlsx`; the newest is used) | The manufacturer's VIN sheet: columns found by their header in row 1 (VIN, Battery No, Motor No, Charger), in any order |
 
 **Commands** (in PowerShell use `npm.cmd` if scripts are blocked):
 
@@ -105,7 +105,8 @@ Always do `npm run test:pdi:dry` first, then `npm run test:pdi` to save.
 | Setting | What it does |
 |---|---|
 | `PDI_DEALER` | Only these PDI dealers, comma-separated, e.g. `332009,332008` |
-| `PDI_TOP` | How many vehicles to list on the PDI page (default 500) |
+| `PDI_ACCEPT_VIN_COLUMNS` | `1` = the VIN sheet's columns really did change; accept it once as the new baseline |
+| `PDI_FIX_FILE` | Correction run for a list of `dealer,chassis` lines |
 | `PDI_PARALLEL` | How many dealers to handle at once (default 3; 1 = one at a time) |
 | `PDI_LOAD_TIMEOUT_S` | Longest wait for a vehicle to load after Show / Save (default 30) |
 | `PDI_VIN_FILE` | Use a different VIN sheet |
@@ -145,8 +146,9 @@ No variables are needed. Then go to **Actions → DMS Automation → Run workflo
 | Enquiry List | 16 | 14 | 1 | 1 | 16 |
 | GSTR Report | 20 | 10 | 5 | 5 | 20 |
 | MIS Report Check | 23 | 12 | 7 | 4 | 23 |
-| PDI Vehicle Details | 24 | 12 | 8 | 4 | 24 |
-| **Total** | **83** | **48** | **21** | **14** | **83** |
+| PDI Vehicle Details | 33 | 19 | 9 | 5 | 30 |
+| Stage DMS Flow | 5 | 5 | 0 | 0 | 5 |
+| **Total** | **97** | **60** | **22** | **15** | **94** |
 
 PDI negative cases tested include: a missing or placeholder login, an unknown dealer code, a missing VIN sheet, a wrong login, a chassis not in the VIN sheet, an invalid Top setting, a results file left open in Excel, and a day with no runs. The full list with steps and results is in the test case workbook.
 
@@ -163,5 +165,6 @@ PDI negative cases tested include: a missing or placeholder login, an unknown de
 | `VIN sheet has no usable …` | The VIN sheet has a note instead of a serial number (e.g. "CHARGER NOT ASSIGNED YET", "CONTACT FACTORY TEAM"). That field is left untouched in the DMS; ask the factory team for the number, then run that dealer again |
 | `Save clicked but values not kept — …` | The DMS didn't keep a value (often a battery / motor / charger number already on another vehicle). The message shows what the DMS has; check that vehicle by hand |
 | `Could not write … is it open in Excel?` | The file was saved under a new name; close Excel before the next run |
-| `The grid is full at Top 500` | Set `PDI_TOP` higher and run again |
+| `The grid is full at 25 and the page shows no "Displaying" count` | The PDI Due List didn't load its count; run that dealer again (`PDI_DEALER`) |
+| `the columns look swapped` | The VIN sheet's Motor / Battery / Charger columns changed places since the last run. Nothing was typed into the DMS. Fix the sheet, or if it is right, run once with `PDI_ACCEPT_VIN_COLUMNS=1` |
 | A run seems stuck | Don't start two runs at once — each run clears the shared results folder |

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { LoginPage } from './models/LoginPage';
 import { EnquiryListReportPage } from './models/EnquiryListReportPage';
+import { missingColumns, blankValues, datesOutsideRange } from './utils/reportChecks';
 import * as XLSX from 'xlsx';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -21,6 +22,7 @@ const REPORT_FROM = parseDateEnv('ENQ_FROM', new Date(2026, 8, 7)); // months ar
 const yesterday = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1); })();
 const REPORT_TO = parseDateEnv('ENQ_TO', yesterday);
 if (REPORT_FROM > REPORT_TO) throw new Error('ENQ_FROM is after ENQ_TO.');
+const REQUIRED_COLUMNS = ['Dealer Code', 'Dealer name', 'Lead No', 'Created Date', 'Lead Source', 'Lead Status', 'Product name'];
 const OUTPUT_DIR = process.env.ENQ_OUTPUT_DIR || path.join(process.cwd(), 'Output');
 const dateLabel = (d: Date) =>
   `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
@@ -77,5 +79,14 @@ test.describe('MFR Vehicles Reports - Enquiry List', () => {
 
     const savedPath = saveEnquiryList(enquiryRows);
     console.log(`[STEP] Enquiry List (${enquiryRows.length} rows) saved to ${savedPath}`);
+
+    // Data checks run after saving, so the file is there to inspect when one fails.
+    // Lead No is not unique: a lead can appear on more than one row.
+    const problems = [
+      ...missingColumns(enquiryRows, REQUIRED_COLUMNS),
+      ...blankValues(enquiryRows, ['Dealer Code', 'Lead No', 'Created Date']),
+      ...datesOutsideRange(enquiryRows, 'Created Date', REPORT_FROM, REPORT_TO),
+    ];
+    expect(problems, `Enquiry List data problems:\n${problems.join('\n')}`).toEqual([]);
   });
 });

@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { LoginPage } from './models/LoginPage';
 import { ReportViewerPage } from './models/ReportViewerPage';
+import { missingColumns, blankValues, datesOutsideRange, nonNumeric, gstrTotalsMismatch } from './utils/reportChecks';
 // Optional overrides (handy on CI/CD, where secrets and folders live elsewhere):
 //   CREDENTIALS_FILE   path to a credentials.json (default: resources/credentials.json)
 //   GSTR_OUTPUT_DIR    where the Excel files go (default: <project>/Output)
@@ -33,6 +34,8 @@ const REPORT_TO = parseDateEnv('GSTR_TO', yesterday);
 if (REPORT_TO < REPORT_FROM) {
   throw new Error(`GSTR To date ${REPORT_TO.toDateString()} is before From date ${REPORT_FROM.toDateString()} — set GSTR_FROM/GSTR_TO.`);
 }
+
+const GSTR_REQUIRED_COLUMNS = ['InvoiceNo', 'InvoiceDate', 'ReferenceNo', 'ReportOn', 'TaxableAmount', 'TotalAmount', 'DiscountAmount', 'Chassis No'];
 
 const dateLabel = (d: Date) =>
   `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
@@ -514,6 +517,28 @@ test.describe('Vehicle Sales - Sales > Vehicle Sales', () => {
     const masterRows = dealers.flatMap((d) => rowsByDealer.get(d.dealercode) ?? []);
     const masterFilePath = saveRowsToExcel('MasterData', masterRows);
     console.log(`[STEP] Saved combined master report (${masterRows.length} rows across ${rowsByDealer.size}/${dealers.length} dealers) to ${masterFilePath}`);
+
+    expect(masterRows.length, 'MasterData row count should equal the sum of the dealer files')
+      .toBe([...rowsByDealer.values()].reduce((n, rows) => n + rows.length, 0));
+
+    // Data checks per dealer, after every file is saved. Soft, so a data problem is reported
+    // alongside (not instead of) any dealers that could not be completed.
+    for (const dealer of dealers) {
+      const rows = rowsByDealer.get(dealer.dealercode);
+      if (!rows?.length) continue;
+      const productSaleRows = rows.filter((r) => getField(r, 'ReportOn') === 'Product Sale');
+      const problems = [
+        ...missingColumns(rows, GSTR_REQUIRED_COLUMNS),
+        // InvoiceNo is only required on Product Sale: RSA Service rows come without one (33 on 28-Sep).
+        ...blankValues(rows, ['ReportOn']),
+        ...datesOutsideRange(rows, 'InvoiceDate', REPORT_FROM, REPORT_TO),
+        ...nonNumeric(rows, ['TaxableAmount', 'TotalAmount']),
+        ...gstrTotalsMismatch(rows),
+        ...blankValues(productSaleRows, ['InvoiceNo', 'ReferenceNo', 'Chassis No']).map((p) => `Product Sale: ${p}`),
+        ...nonNumeric(productSaleRows, ['DiscountAmount']).map((p) => `Product Sale: ${p}`),
+      ];
+      expect.soft(problems, `Dealer ${dealer.dealercode} data problems:\n${problems.join('\n')}`).toEqual([]);
+    }
 
     // Fail the run (so CI/CD shows it red) only after everything that could be saved is saved.
     if (failed.length) {

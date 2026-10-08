@@ -5,22 +5,27 @@ import * as path from 'node:path';
 import { LoginPage, UserCredentials } from './models/LoginPage';
 import { writePdiDashboard, problemsOf, outcomeOf, FailedDealer, vinFilePath } from './utils/pdiReport';
 import { writePdiWorkbook } from './utils/pdiWorkbook';
-import { buildPdiDaily, localDate, RUNS_DIR } from './utils/pdiDaily';
+import { buildPdiDaily, localDate, RUNS_DIR, OUTPUT_DIR } from './utils/pdiDaily';
 
 // PDI blank-detail fix-up, for every dealer in PIDDealerCodes / PIDUsers (credentials.json), PDI_PARALLEL at a time:
 //   1. WORKSHOP -> PDI: find grid rows with a blank field (usually EngineNo) and save their chassis numbers.
 //   2. SETTINGS -> Admin -> Modify vehicle details: for each saved chassis, Show it, look it up in the
-//      VIN Details sheet and fill Engine No (col C), Battery (col B) and Charger (col D), then Save.
+//      VIN Details sheet and fill Engine No (Motor No column), Battery and Charger, then Save.
+//      The sheet's columns are found by header name, so their order doesn't matter.
 //
 // Settings (all optional):
 //   PDI_DEALER    only these dealer codes, comma-separated, e.g. 332009,332008 (default: all PDI dealers)
-//   PDI_VIN_FILE  VIN Details workbook (default: the newest resources/VIN Details*.xlsx)
+//   PDI_VIN_FILE  VIN Details workbook (default: the newest resources/VIN*.xlsx, e.g. "VIN Details.xlsx")
 //   PDI_DRY_RUN   1 = fill the form but don't click Save (for a first check)
-//   PDI_TOP       vehicles to list on the PDI page (default 500; the page itself shows 25)
 //   PDI_PARALLEL  dealers processed at once, each in its own browser window (default 3; 1 = one at a time)
 //   PDI_LOAD_TIMEOUT_S  longest wait for Show / Save to reload the page (default 30)
 //   PDI_SHOW_WAIT_S seconds to wait after clicking Show on the PDI Due List (default 30)
 //   PDI_REFRESHES extra Show clicks when the PDI Due List says "Displaying : 0" (default 2)
+//   PDI_ACCEPT_VIN_COLUMNS 1 = skip the swapped-columns check once and take this sheet as the new baseline
+//   PDI_FIX_FILE  correction run: a CSV of "dealer,chassis" lines. Skips the PDI Due List and re-saves Engine
+//                 No, Battery and Charger from the VIN sheet for exactly these chassis, even though they are no
+//                 longer blank (their old values go in the "Was blank" column). Only the dealers in the file
+//                 are run (PDI_DEALER narrows it further).
 //
 // A run sends no email. It saves its own result file in Output/PDI runs/ and refreshes the day's single
 // copy, Output/PDI_Daily_<date>.xlsx + .html, plus Output/PDI_Master.xlsx + .html (Tracking sheet and the
@@ -30,14 +35,31 @@ const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
 const VIN_FILE = vinFilePath();
 const DRY_RUN = process.env.PDI_DRY_RUN === '1';
 const EDIT_REASON = 'Details updated';
-const PDI_TOP = Number(process.env.PDI_TOP || 500); // rows to list on the PDI page (the page's own default is 25)
-if (!Number.isInteger(PDI_TOP) || PDI_TOP < 1) throw new Error(`PDI_TOP must be a whole number above 0 (got "${process.env.PDI_TOP}")`);
 const PDI_PARALLEL = Number(process.env.PDI_PARALLEL || 3); // dealers processed at once, each in its own browser window
 if (!Number.isInteger(PDI_PARALLEL) || PDI_PARALLEL < 1) throw new Error(`PDI_PARALLEL must be a whole number above 0 (got "${process.env.PDI_PARALLEL}")`);
 const SHOW_WAIT_MS = Number(process.env.PDI_SHOW_WAIT_S || 30) * 1000; // wait after clicking Show on the PDI Due List
 const PDI_REFRESHES =Number(process.env.PDI_REFRESHES || 2); // extra Show clicks when the PDI Due List says "Displaying : 0"
 const LOAD_TIMEOUT =Number(process.env.PDI_LOAD_TIMEOUT_S || 30) * 1000; // longest wait for Show / Save to reload the page
 const SETTLE_MS = 1000;
+
+// Correction run (PDI_FIX_FILE): dealer code -> chassis numbers to re-save. Lines that aren't
+// "<dealer>,<17-character chassis>" (a header, blank lines) are skipped.
+const FIX_FILE = process.env.PDI_FIX_FILE ? path.resolve(process.env.PDI_FIX_FILE) : '';
+function loadFixList(): Map<string, string[]> | null {
+  if (!FIX_FILE) return null;
+  if (!fs.existsSync(FIX_FILE)) throw new Error(`PDI_FIX_FILE not found: ${FIX_FILE}`);
+  const byDealer = new Map<string, string[]>();
+  for (const line of fs.readFileSync(FIX_FILE, 'utf8').split(/\r?\n/)) {
+    const [dealer, chassis] = line.split(/[,;\t]/).map((s) => s.trim().replace(/^"|"$/g, ''));
+    if (!dealer || !chassis || !/^[A-Z0-9]{17}$/i.test(chassis)) continue;
+    const list = byDealer.get(dealer) || [];
+    if (!list.includes(chassis.toUpperCase())) list.push(chassis.toUpperCase());
+    byDealer.set(dealer, list);
+  }
+  if (!byDealer.size) throw new Error(`PDI_FIX_FILE ${path.basename(FIX_FILE)} has no "dealer,chassis" lines.`);
+  return byDealer;
+}
+const FIX_LIST = loadFixList();
 
 const PDI_URL = 'Product/PDIStockCheckingMain.aspx';
 const MODIFY_VEHICLE_URL = 'Common/ChangeChassisNo.aspx';
@@ -59,7 +81,13 @@ function pickDealers(): UserCredentials[] {
     ...ownLogin,
     ...codes.filter((c) => !listed.has(c.toLowerCase())).map((dealercode) => ({ ...credentials.PIDLogin, dealercode })),
   ];
-  const wanted = (process.env.PDI_DEALER || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  let wanted = (process.env.PDI_DEALER || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  // A correction run covers only the dealers in its fix file (narrowed by PDI_DEALER when set).
+  if (FIX_LIST) {
+    const inFile = [...FIX_LIST.keys()].map((c) => c.toLowerCase());
+    wanted = wanted.length ? inFile.filter((c) => wanted.includes(c)) : inFile;
+    if (!wanted.length) throw new Error(`None of the PDI_DEALER codes are in ${path.basename(FIX_FILE)}.`);
+  }
   const all: UserCredentials[] = [...pidUsers, credentials.dealervalidUser, ...(credentials.dealerUsers || [])];
   let dealers = wanted.length
     ? wanted.map((code) => {
@@ -97,18 +125,91 @@ const VIN_FIELDS: { field: string; key: keyof VinDetails; label: string }[] = [
 // or are empty; those must never be typed into the DMS.
 const isSerial = (v: string) => !!v && !/\s/.test(v) && /\d/.test(v);
 
-// VIN Details sheet: A = VIN, B = Battery No, C = Motor No, D = CHARGER (header in row 1).
+// VIN Details sheet columns, found by their header text in row 1 — never by position: on 1-Oct-2026 the
+// sheet's Battery and Motor columns were swapped and 41 chassis got Engine No and Battery the wrong way round.
+const VIN_COLUMNS: { key: keyof VinDetails | 'vin'; header: RegExp; label: string }[] = [
+  { key: 'vin', header: /^(vin|chassis)/, label: 'VIN' },
+  { key: 'motor', header: /^(motor|engine)/, label: 'Motor No' },
+  { key: 'battery', header: /^battery/, label: 'Battery No' },
+  { key: 'charger', header: /^charger/, label: 'Charger' },
+];
+
 function loadVinDetails(): Map<string, VinDetails> {
-  if (!fs.existsSync(VIN_FILE)) throw new Error(`VIN Details workbook not found: ${VIN_FILE} — put a "VIN Details….xlsx" in resources/ or set PDI_VIN_FILE.`);
+  if (!fs.existsSync(VIN_FILE)) throw new Error(`VIN Details workbook not found: ${VIN_FILE} — put a "VIN….xlsx" in resources/ or set PDI_VIN_FILE.`);
   const workbook = XLSX.readFile(VIN_FILE);
   const sheet = workbook.Sheets[workbook.SheetNames[0]!]!;
   const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: '' });
-  const byVin = new Map<string, VinDetails>();
-  for (const [vin, battery, motor, charger] of rows.slice(1)) {
-    const key = String(vin || '').trim().toUpperCase();
-    if (key) byVin.set(key, { battery: String(battery).trim(), motor: String(motor).trim(), charger: String(charger).trim() });
+  const headers = (rows[0] || []).map((h) => String(h).trim().toLowerCase());
+  // Each column must match exactly one header, or the run stops before touching the DMS.
+  const col = {} as Record<keyof VinDetails | 'vin', number>;
+  for (const c of VIN_COLUMNS) {
+    const found = headers.flatMap((h, i) => (c.header.test(h) ? [i] : []));
+    if (found.length !== 1) {
+      throw new Error(`VIN Details sheet (${path.basename(VIN_FILE)}): ${found.length ? 'more than one' : 'no'} "${c.label}" column in row 1 ` +
+        `(headers: ${headers.map((h) => `"${h}"`).join(', ')}). Fix the header row and run again.`);
+    }
+    col[c.key] = found[0]!;
   }
+  console.log(`[STEP] VIN sheet columns: ${VIN_COLUMNS.map((c) => `${c.label} = ${XLSX.utils.encode_col(col[c.key])} ("${rows[0]![col[c.key]]}")`).join(', ')}`);
+  const byVin = new Map<string, VinDetails>();
+  for (const row of rows.slice(1)) {
+    const key = String(row[col.vin] || '').trim().toUpperCase();
+    const cell = (k: keyof VinDetails) => String(row[col[k]] ?? '').trim();
+    if (key) byVin.set(key, { battery: cell('battery'), motor: cell('motor'), charger: cell('charger') });
+  }
+  checkColumnProfile(byVin);
   return byVin;
+}
+
+// Headers can be right while the data under them is swapped (as on 1-Oct-2026). There's no fixed rule for
+// what each serial looks like; instead each run saves how each column's serials start (first 3 characters)
+// and the next run compares: if this sheet's Motor column looks like last time's Battery column, the run
+// stops before touching the DMS. A column whose format is simply new (a new supplier) only gets a warning.
+// PDI_ACCEPT_VIN_COLUMNS=1 skips the check once and saves the sheet as the new baseline.
+const PROFILE_FILE = path.join(OUTPUT_DIR, 'PDI_VIN_Column_Profile.json');
+type ColumnProfile = Record<keyof VinDetails, Record<string, number>>; // prefix -> share of the column's serials
+
+function profileOf(byVin: Map<string, VinDetails>): ColumnProfile {
+  const profile = {} as ColumnProfile;
+  for (const k of ['motor', 'battery', 'charger'] as const) {
+    const prefixes = [...byVin.values()].map((d) => d[k]).filter(isSerial).map((v) => v.slice(0, 3).toUpperCase());
+    const counts: Record<string, number> = {};
+    for (const p of prefixes) counts[p] = (counts[p] || 0) + 1;
+    profile[k] = Object.fromEntries(Object.entries(counts).map(([p, n]) => [p, n / prefixes.length]));
+  }
+  return profile;
+}
+
+// How much two columns' prefixes overlap: 1 = same mix of prefixes, 0 = nothing in common.
+const overlap = (a: Record<string, number>, b: Record<string, number>) =>
+  Object.entries(a).reduce((sum, [p, share]) => sum + Math.min(share, b[p] || 0), 0);
+
+function checkColumnProfile(byVin: Map<string, VinDetails>) {
+  const now = profileOf(byVin);
+  const label = (k: keyof VinDetails) => VIN_COLUMNS.find((c) => c.key === k)!.label;
+  const prev: ColumnProfile | null = fs.existsSync(PROFILE_FILE) ? JSON.parse(fs.readFileSync(PROFILE_FILE, 'utf8')) : null;
+  if (prev && process.env.PDI_ACCEPT_VIN_COLUMNS !== '1') {
+    const keys = ['motor', 'battery', 'charger'] as const;
+    const mixedUp: string[] = [];
+    for (const k of keys) {
+      if (!Object.keys(now[k]).length || !prev[k]) continue;
+      const own = overlap(now[k], prev[k]);
+      const [other, best] = keys.filter((j) => j !== k && prev[j])
+        .map((j) => [j, overlap(now[k], prev[j])] as const).sort((a, b) => b[1] - a[1])[0] || [];
+      if (other && best! >= 0.5 && best! > own) {
+        mixedUp.push(`the "${label(k)}" column now holds values like last run's "${label(other)}" column`);
+      } else if (own < 0.2) {
+        console.log(`[WARN] VIN sheet: the "${label(k)}" column's values start differently from last run ` +
+          `(now ${Object.keys(now[k]).slice(0, 3).join(', ')}…) — a new format? Carrying on.`);
+      }
+    }
+    if (mixedUp.length) {
+      throw new Error(`VIN Details sheet (${path.basename(VIN_FILE)}): ${mixedUp.join('; ')} — the columns look swapped. ` +
+        'Nothing was typed into the DMS. Fix the sheet and run again, or if it is right, run once with PDI_ACCEPT_VIN_COLUMNS=1.');
+    }
+  }
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+  fs.writeFileSync(PROFILE_FILE, JSON.stringify(now, null, 2));
 }
 
 interface BlankRow { chassisNo: string; blankFields: string[] }
@@ -150,7 +251,7 @@ async function saveResults(results: ResultRow[], dealersChecked: ResultRow[], de
   fs.mkdirSync(RUNS_DIR, { recursive: true });
   return writePdiWorkbook(path.join(RUNS_DIR, `PDI_BlankChassis_${stamp}.xlsx`), {
     title: 'PDI vehicle details',
-    subtitle: `${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })} · ${dealers.length} dealer(s) · VIN sheet: ${path.basename(VIN_FILE)}`,
+    subtitle: `${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })} · ${dealers.length} dealer(s) · VIN sheet: ${path.basename(VIN_FILE)}${FIX_FILE ? ` · correction run (${path.basename(FIX_FILE)})` : ''}`,
     dryRun: DRY_RUN, dealers, failed: failures, rows: results, rowsSheet: 'PDI Blank Chassis', dealersSheet: dealersChecked,
   });
 }
@@ -166,13 +267,8 @@ async function resetSession(page: Page, username: string, log: Log) {
   await page.context().clearCookies().catch(() => {});
 }
 
-async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Map<string, VinDetails>, log: Log): Promise<ResultRow[]> {
-  const loginPage = new LoginPage(page, log);
-  await loginPage.goto();
-  await loginPage.login(dealer);
-  await loginPage.verifyDashboard();
-
-  // WORKSHOP -> PDI
+// WORKSHOP -> PDI: list every vehicle on the PDI Due List and return the rows with a blank field.
+async function findBlankPdiRows(page: Page, log: Log): Promise<BlankRow[]> {
   log('[STEP] Opening WORKSHOP -> PDI...');
   // Menu link names carry an icon glyph (e.g. " PDI"), so match loosely / by href.
   await page.getByRole('link', { name: /^\W*WORKSHOP\W*$/ }).click();
@@ -245,9 +341,26 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
   else if (gridRows < displayed) log(`[WARN] Page says Displaying : ${displayed} but only ${gridRows} rows are in the grid — some vehicles may not be checked.`);
   if (displayed === null && gridRows >= 25) log('[WARN] The grid is full at 25 and the page shows no "Displaying" count — there may be more vehicles that were not checked.');
 
-  const blankRows = await readBlankPdiRows(page);
-  log(`[STEP] ${blankRows.length} PDI row(s) with blank fields:`);
-  blankRows.forEach((r) => log(`   ${r.chassisNo}  (blank: ${r.blankFields.join(', ')})`));
+  return readBlankPdiRows(page);
+}
+
+async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Map<string, VinDetails>, log: Log): Promise<ResultRow[]> {
+  const loginPage = new LoginPage(page, log);
+  await loginPage.goto();
+  await loginPage.login(dealer);
+  await loginPage.verifyDashboard();
+
+  // A correction run (PDI_FIX_FILE) skips the PDI Due List and re-saves exactly the listed chassis.
+  const fixChassis = FIX_LIST?.get(String(dealer.dealercode));
+  const blankRows: BlankRow[] = fixChassis
+    ? fixChassis.map((chassisNo) => ({ chassisNo, blankFields: [] }))
+    : await findBlankPdiRows(page, log);
+  if (fixChassis) {
+    log(`[STEP] Correction run: ${fixChassis.length} chassis from ${path.basename(FIX_FILE)}: ${fixChassis.join(', ')}`);
+  } else {
+    log(`[STEP] ${blankRows.length} PDI row(s) with blank fields:`);
+    blankRows.forEach((r) => log(`   ${r.chassisNo}  (blank: ${r.blankFields.join(', ')})`));
+  }
 
   const results: ResultRow[] = blankRows.map((r) => ({
     Dealer: String(dealer.dealercode), ChassisNo: r.chassisNo, BlankFields: r.blankFields.join(', '),
@@ -308,23 +421,32 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
   };
 
   // One attempt at a chassis; returns its Status. Throws on a page error (timeouts etc.).
-  const updateChassis = async (chassis: string, details: VinDetails): Promise<string> => {
+  const updateChassis = async (row: ResultRow, details: VinDetails): Promise<string> => {
+    const chassis = row.ChassisNo!;
     await showVehicle(chassis);
 
     const loaded = await fieldValue('ChassisNo');
     if (loaded.toUpperCase() !== chassis.toUpperCase()) return `Show did not load this vehicle (got "${loaded}")`;
 
+    // A correction run keeps what the DMS held before, so the report shows what was overwritten.
+    if (fixChassis) {
+      const before = await Promise.all(VIN_FIELDS.map(async (f) => `${f.label} ${(await fieldValue(f.field)) || '(empty)'}`));
+      row.BlankFields = `Correction — before: ${before.join(', ')}`;
+    }
+
     // Only real serial numbers are typed in. A VIN-sheet note ("CHARGER NOT ASSIGNED YET", "CONTACT
-    // FACTORY TEAM", …) leaves that DMS field as it is, and is reported when the field is still empty.
+    // FACTORY TEAM", …) leaves that DMS field as it is, and is reported when the field is still empty —
+    // or, in a correction run, always (the value left there may be the wrong one being corrected).
     const filled: [field: string, value: string][] = [];
     const notes: string[] = [];
     for (const f of VIN_FIELDS) {
       const value = details[f.key];
+      const current = await fieldValue(f.field);
       if (isSerial(value)) {
         await page.locator(`[name="ctl00$cpMain$${f.field}"]`).fill(value);
         filled.push([f.field, value]);
-      } else if (!(await fieldValue(f.field))) {
-        notes.push(`${f.label} "${value.replace(/\s+/g, ' ') || 'empty'}"`);
+      } else if (!current || fixChassis) {
+        notes.push(`${f.label} "${value.replace(/\s+/g, ' ') || 'empty'}"${current ? ` (DMS still has "${current}")` : ''}`);
       }
     }
     const noteText = notes.length ? `VIN sheet has no usable ${notes.join(', ')}` : '';
@@ -365,7 +487,7 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
       // A page error gets one retry after recovering (re-saving the same values is harmless).
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          row.Status = await updateChassis(chassis, details);
+          row.Status = await updateChassis(row, details);
           const ok = /^(Updated|Dry run)/.test(row.Status);
           log(ok
             ? `[OK] ${chassis}: Engine ${details.motor}, Battery ${details.battery}, Charger ${details.charger} — ${row.Status}${attempt > 1 ? ' (on retry)' : ''}`
@@ -407,7 +529,7 @@ test.describe('PDI', () => {
     const dealers = pickDealers();
     const vinDetails = loadVinDetails();
     const lanes = Math.min(PDI_PARALLEL, dealers.length);
-    console.log(`[STEP] ${dealers.length} dealer(s), ${lanes} at a time: ${dealers.map((d) => d.dealercode).join(', ')}; ${vinDetails.size} VINs loaded from ${path.basename(VIN_FILE)}${DRY_RUN ? ' (DRY RUN — no Save)' : ''}`);
+    console.log(`[STEP] ${dealers.length} dealer(s), ${lanes} at a time: ${dealers.map((d) => d.dealercode).join(', ')}; ${vinDetails.size} VINs loaded from ${path.basename(VIN_FILE)}${DRY_RUN ? ' (DRY RUN — no Save)' : ''}${FIX_FILE ? ` — CORRECTION RUN from ${path.basename(FIX_FILE)}` : ''}`);
 
     // ~25 blank rows x ~25s each per dealer, with headroom.
     test.setTimeout(Math.ceil(dealers.length / lanes) * 20 * 60 * 1000);

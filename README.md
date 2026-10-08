@@ -4,9 +4,10 @@ End-to-end Playwright automation for **River DMS** (`rivermobility.gaindms.com`)
 
 | Script | What it does | Output |
 |---|---|---|
-| `tests/enquiryListReport.spec.ts` | Dealer login → Enquiry List (full list, every row) | `Output/Enquiry_List_<from>_<to>.xlsx` |
+| `tests/enquiryListReport.spec.ts` | Dealer login → Enquiry List (full list, every row). Checks the key columns are present, every row has a Dealer Code, Lead No and Created Date, and every Created Date is inside the date range | `Output/Enquiry_List_<from>_<to>.xlsx` |
 | `tests/GSTR Report.spec.ts` | For every dealer in `credentials.json`: GSTR ProductWise Sales Details, plus the **Post GST Discount** read from each Product Sale invoice PDF | `Output/<dealer>_SalesGSTNReport_<from>_<to>.xlsx` and `MasterData_…xlsx` |
 | `tests/PDI.spec.ts` | For every PDI dealer (`PIDDealerCodes` / `PIDUsers`): finds **WORKSHOP → PDI** rows with a blank field and fills Engine / Battery / Charger from the VIN Details sheet in **Settings → Admin → Modify vehicle details** | one copy per day, `Output/PDI_Daily_<date>.xlsx` + dashboard, refreshed by every run (each run's own file goes to `Output/PDI runs/`); no email per run |
+| `tests/Automation for Testing.spec.ts` | **Stage DMS only** (`credentials.stageUser`): River User login → create enquiry → follow-up → booking → ₹5,000 receipt, checking each step's fields and saved records. Each run leaves new records on stage | Playwright report only |
 | `run_mis_check.js` | Opens every report under every **MIS** page (~274), classifies each one (OK / server error / timeout / blank / needs input), records its definition and available columns, and compares with the previous run | `MIS Reports/` (formatted Excel, CSV, summary, snapshot) and an email summary |
 
 Reports with more than 1,000 rows are read from the DMS's Excel download, so large dealers are fully covered.
@@ -27,9 +28,9 @@ cd E2E-DMS
 
 | File (never committed) | Created from | Fill in |
 |---|---|---|
-| `resources/credentials.json` | `resources/credentials.example.json` | `dealervalidUser` (Enquiry List, MIS check), `dealerUsers` (one entry per dealer for GSTR) and, for PDI, `PIDLogin` (the shared login) with `PIDDealerCodes` (the dealer codes), plus `PIDUsers` for any dealer with its own login |
+| `resources/credentials.json` | `resources/credentials.example.json` | `dealervalidUser` (Enquiry List, MIS check), `dealerUsers` (one entry per dealer for GSTR) and, for PDI, `PIDLogin` (the shared login) with `PIDDealerCodes` (the dealer codes), plus `PIDUsers` for any dealer with its own login; `stageUser` for the Stage DMS spec |
 | `.env` | `.env.example` | `GMAIL_USER`, `GMAIL_APP_PASSWORD` (a [Gmail App Password](https://myaccount.google.com/apppasswords)), `GMAIL_TO`; optional `PDI_CC` |
-| `resources/VIN Details.xlsx` | copy it in by hand (any `VIN Details….xlsx` name works; the newest is used) | VIN sheet for PDI: A = VIN, B = Battery No, C = Motor No, D = Charger |
+| `resources/VIN Details.xlsx` | copy it in by hand (any `VIN….xlsx` name works, e.g. `VIN.xlsx`; the newest is used) | VIN sheet for PDI: columns found by their header in row 1 (VIN, Battery No, Motor No, Charger), in any order |
 
 ---
 
@@ -38,11 +39,13 @@ cd E2E-DMS
 ```powershell
 npm run test:enquiry-list      # Enquiry List (~1-2 min)
 npm run test:gstr              # GSTR Report, all dealers (~15-60 min)
+npm run test:stage             # Stage DMS: login, enquiry, follow-up, booking, receipt (creates records on stage)
 npm run test:pdi:dry           # PDI: fill the form for every blank chassis, don't Save
 npm run test:pdi               # PDI: fill and Save (changes live DMS records; ~25 s per chassis)
 npm run report:pdi-daily       # PDI: the one email of the day, for all of today's runs (run it after the last PDI run)
 npm start                      # MIS report check (~10 min)
-npm test                       # Enquiry List + GSTR (PDI is skipped unless run with the commands above)
+npm test                       # every spec in tests/: Enquiry List, GSTR, Stage DMS and the legacy Finance Dashboard
+                               # (PDI is skipped unless run with the commands above; Stage needs credentials.stageUser)
 npm run report:html            # open the last Playwright HTML report
 ```
 
@@ -55,7 +58,8 @@ $env:BROWSER_CHANNEL='msedge'; npm run test:gstr
 After each Playwright run, `tests/reporters/gmail-reporter.ts` emails the pass/fail status to `GMAIL_TO`. The MIS check sends its own HTML summary with the Excel file attached.
 
 ### GSTR Report details
-- **Date range:** 01-09-2026 to 24-09-2026 by default. Override with `GSTR_FROM` / `GSTR_TO` (dd-mm-yyyy).
+- **Date range:** 01-09-2026 to yesterday by default. Override with `GSTR_FROM` / `GSTR_TO` (dd-mm-yyyy).
+- **Data checks** (after every file is saved, per dealer): required columns present, every InvoiceDate inside the date range, TaxableAmount and TotalAmount are numbers, TotalAmount = Taxable + CGST + SGST + IGST + CESS (within ₹1), Product Sale rows have an InvoiceNo, ReferenceNo, Chassis No and a numeric DiscountAmount, and MasterData has exactly the dealer files' rows. Any failure lists the dealer and the first few rows.
 - **Resumable:** a dealer whose file for the same date range already exists in `Output/` is reused, not re-run. Set `GSTR_RERUN_ALL=1` to redo every dealer.
 - **One dealer failing doesn't stop the run.** It's retried once at the end, and MasterData is always written. The test fails (red) only after everything that could be saved is saved.
 - **An invoice that can't be read is skipped** with a `[WARN] Reference …` line; check those by hand.
@@ -63,7 +67,7 @@ After each Playwright run, `tests/reporters/gmail-reporter.ts` emails the pass/f
 ### PDI details
 - **Run it** with `npm run test:pdi:dry` (fill only) or `npm run test:pdi` (fill and Save). In PowerShell use `npm.cmd` if scripts are blocked.
 - **Excel:** a formatted workbook — a Summary sheet (headline figures and a table by dealer), then one row per chassis with the result colour-coded, then every dealer checked. Header rows are frozen and filterable.
-- **Checked:** every vehicle on the PDI page — the spec raises the page's "Top" box (25 by default) to `PDI_TOP` (500) and clicks Show first, and warns if the list is full. After Save, each chassis is opened again to confirm the DMS kept the values; a timeout triggers a fresh login and one retry.
+- **Checked:** every vehicle on the PDI page — the page lists 25 by default, so when its "Displaying : N" count is higher the spec sets the "Top" box to N and clicks Show again. If the list says "Displaying : 0" it clicks Show up to `PDI_REFRESHES` more times; if it shows no count and the grid is full at 25, it warns. After Save, each chassis is opened again to confirm the DMS kept the values; a timeout triggers a fresh login and one retry.
 - **Speed:** `PDI_PARALLEL` dealers (default 3) run at once, each in its own browser window. After Show / Save the spec waits only until the page has reloaded (up to `PDI_LOAD_TIMEOUT_S`, 30s) instead of a fixed 10s. If the DMS allows only one session per login, set `PDI_PARALLEL=1`.
 - **Pass / fail:** the run passes only when every blank chassis is updated and no dealer fails. A failed run is still red. Runs send **no email**: rerun `npm run test:pdi` as often as needed during the day, and each run refreshes the day's single copy (`Output/PDI_Daily_<date>.xlsx` + `.html`, latest result per chassis). After the last run, `npm run report:pdi-daily` emails that copy once (to `GMAIL_TO`, CC `PDI_CC`), pass or fail, with problems under "Needs attention" and flagged in the subject. Running it again the same day rebuilds the files but doesn't resend (`PDI_FORCE_EMAIL=1` to resend). The generic "DMS Automation Report" email is not sent for PDI. Don't delete the files in `Output/PDI runs/` during the day: they are what the daily copy is built from (a rebuild refuses to replace a daily copy that covers more runs than are left).
 - **Master and clean-up:** every rebuild also rewrites `Output/PDI_Master.xlsx`: a **Tracking** sheet first (all-time totals: chassis found, updated, still no usable VIN data, plus one row per day with running totals), then one sheet per date for the last 3 days (today included, newest first) copied from that day's daily file. A day whose daily file is missing keeps the sheet already in the master. Alongside it, `Output/PDI_Master.html` is an interactive dashboard over those days: chassis updated in total, a day-wise outcome chart, updated chassis per dealer per day, and every chassis row with day/outcome filters and search. The all-time history behind the Tracking sheet is kept in `Output/PDI_History.json`, which is never deleted. PDI files older than those 3 days are deleted automatically: run files and email markers in `Output/PDI runs/` and the `PDI_Daily_<date>` files. GSTR and other outputs are not touched. If the master is open in Excel it is left as it is and updated on the next run.
@@ -90,12 +94,15 @@ All optional. See `.env.example`.
 | `GSTR_OUTPUT_DIR` | GSTR | Output folder (default `Output/`) |
 | `GSTR_RERUN_ALL` | GSTR | `1` = don't reuse saved dealers |
 | `ENQ_FROM`, `ENQ_TO` | Enquiry List | Report dates (dd-mm-yyyy); default 07-09-2026 to yesterday |
-| `PDI_TOP` | PDI | Vehicles to list on the PDI page (default 500) |
+| `PDI_SHOW_WAIT_S` | PDI | Seconds to wait after clicking Show on the PDI Due List (default 30) |
+| `PDI_REFRESHES` | PDI | Extra Show clicks when the PDI Due List says "Displaying : 0" (default 2) |
+| `PDI_ACCEPT_VIN_COLUMNS` | PDI | `1` = skip the swapped-columns check once and take this VIN sheet as the new baseline |
+| `PDI_FIX_FILE` | PDI | Correction run: a CSV of `dealer,chassis` lines. Re-saves Engine No, Battery and Charger from the VIN sheet for exactly those chassis, even though they are no longer blank |
 | `PDI_PARALLEL` | PDI | Dealers processed at once, each in its own browser window (default 3; `1` = one at a time) |
 | `PDI_LOAD_TIMEOUT_S` | PDI | Longest wait for Show / Save to reload the page (default 30) |
 | `PDI_DEALER` | PDI | Only these dealers, comma-separated (default: all PDI dealers) |
 | `PDI_DRY_RUN` | PDI | `1` = fill the form but don't Save (set by `test:pdi:dry`) |
-| `PDI_VIN_FILE` | PDI | VIN Details workbook (default: the newest `resources/VIN Details*.xlsx`) |
+| `PDI_VIN_FILE` | PDI | VIN Details workbook (default: the newest `resources/VIN*.xlsx`) |
 | `PDI_CC` | PDI daily report | CC list for the daily PDI email |
 | `PDI_SEND_EMAIL` | PDI daily report | `0` = build the report but don't email it |
 | `PDI_FORCE_EMAIL` | PDI daily report | `1` = send again although today's email already went out |
@@ -152,7 +159,7 @@ docs/Confluence.md              Team-facing overview, ready to paste into Conflu
 setup.ps1 / setup.bat           One-click setup (double-click setup.bat on a new PC)
 ```
 
-Kept out of Git (`.gitignore`): `.env`, `resources/credentials.json`, `resources/VIN Details*.xlsx`, `dms-profile/` (saved DMS login), `Output/` and `MIS Reports/` (contain customer data), `node_modules/`, and the test run results.
+Kept out of Git (`.gitignore`): `.env`, `resources/credentials.json`, `resources/VIN*.xlsx`, `dms-profile/` (saved DMS login), `Output/` and `MIS Reports/` (contain customer data), `node_modules/`, and the test run results.
 
 ---
 
