@@ -22,28 +22,24 @@ export class ProductWiseSalesDetailsReportPage extends ReportViewerPage {
   async navigateToProductWiseSalesDetails() {
     console.log('[STEP] Navigating to Sales > Product-wise sales details...');
 
-    // First pass: MIS > Lead Reports just to clear whatever submenu the
-    // previous screen left expanded, so the second pass below reliably finds
-    // Sales under MFR Vehicles Reports.
+    // Open MIS > Enquiry Reports first to collapse whatever submenu the previous screen left
+    // expanded; otherwise Sales under MFR Vehicles Reports isn't reliably found.
     await this.clickMenuItem(this.misLink, this.leadReportsLink);
     console.log('[STEP] Clicked MIS > Enquiry Reports to reset the menu.');
 
-    // Second pass: the actual path to Product-wise sales details.
     await this.clickMenuItem(this.misLink, this.mfrVehiclesReportsLink);
     await this.salesLink.click();
     await this.productWiseSalesDetailsLink.click();
     console.log('[STEP] Clicked MIS > MFR Vehicles Reports > Sales > Product-wise sales details.');
   }
 
-  // MIS is a toggle: clicking it while its menu is already open collapses it, hiding the item
-  // we want. The likely cause of a CI failure where "MFR Vehicles Reports" was never found on the
-  // second navigation: MIS was still open, so the second MIS click closed it. Only click the
-  // parent when the item isn't already showing.
+  // MIS is a toggle: clicking it while its menu is open collapses it (this broke the second
+  // navigation in CI). Only click the parent when the item isn't already showing.
   private async clickMenuItem(parent: Locator, item: Locator) {
     if (!(await item.isVisible().catch(() => false))) {
       await parent.click();
       await item.waitFor({ state: 'visible', timeout: 10000 }).catch(async () => {
-        await parent.click(); // the click closed an open menu — open it again
+        await parent.click(); // the click closed an open menu; open it again
       });
     }
     await item.click();

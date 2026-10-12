@@ -1,6 +1,6 @@
 /*
  * MIS Report Checker for River DMS - run from VS Code
- * ---------------------------------------------------
+ *
  * Setup (one time, in the VS Code terminal, inside this folder):
  *     npm install
  * Run:
@@ -29,7 +29,7 @@ const credentials = JSON.parse(fs.readFileSync(process.env.CREDENTIALS_FILE || p
 const PROFILE_DIR = process.env.MIS_PROFILE_DIR || path.join(__dirname, 'dms-profile');
 require('dotenv').config({ path: path.join(__dirname, '.env') }); // GMAIL_USER / GMAIL_APP_PASSWORD / GMAIL_TO
 
-// ======================= SETTINGS =======================
+// Settings
 const CONFIG = {
   baseUrl: 'https://rivermobility.gaindms.com',
   startPage: '/Accounts/AccountsReports.aspx', // any page that shows the MIS menu
@@ -55,7 +55,6 @@ const CONFIG = {
     // Month + Year fields (Leakage And Redemption Summary, Spares FSN Analysis) use the current month and year
   },
 };
-// ========================================================
 
 const OUT_DIR = path.join(__dirname, 'MIS Reports'); // every output file is saved here
 
@@ -92,7 +91,7 @@ setTimeout(() => {
   process.exit(2);
 }, CONFIG.maxRunMinutes * 60000).unref();
 
-// ---------- This function runs INSIDE the DMS page (browser side) ----------
+// Runs in the browser via page.evaluate, once per MIS page.
 async function checkPageInBrowser(cfg) {
   const ERR_RE = /(Server Error|Runtime Error|Exception|error occurred|Invalid (object|column)|Timeout expired|Could not find|Incorrect syntax|Conversion failed|Procedure or function|Something went wrong|Object reference|Gateway Time-out|Bad Gateway|Service Unavailable)/i;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -206,7 +205,7 @@ async function checkPageInBrowser(cfg) {
     const rec = { section, report: name, definition, objects: [], result: '', detail: '', rows: '', seconds: '' };
     const t0 = Date.now();
     try {
-      // 1. select the report (same as clicking it)
+      // Select the report the same way a click does
       const rs = document.getElementById('ctl00_cpMain_ReportSlno');
       let ok = false;
       openedUrl = null;
@@ -219,13 +218,12 @@ async function checkPageInBrowser(cfg) {
       if (!ok) { rec.result = 'COULD NOT SELECT'; rec.detail = 'Report link click failed'; }
       else if (openedUrl) { rec.result = 'NEW TAB'; rec.openUrl = openedUrl; }
       else {
-        // 2. fill dates
         const vis = [...f.querySelectorAll('input,select,textarea')]
           .filter(e => e.offsetParent && e.type !== 'hidden' && !/ddlSearchOption|txtSearch/i.test(e.id));
         vis.filter(e => e.tagName === 'INPUT' && (e.type === 'text' || e.type === '') && /Dat/i.test(e.id + e.name))
           .forEach(e => { e.value = /PurchaseDate/i.test(e.id) ? cfg.purchaseDate : /To|End/i.test(e.id) ? cfg.to : cfg.from; });
-        // 3. View Report. If the DMS asks for more input: first fill the extra values from CONFIG
-        //    (chassis no, spare part, month/year...), then also pick the first branch/franchise.
+        // If the DMS asks for more input, fill the CONFIG extra values first (chassis no, spare part,
+        // month/year...), then also pick the first branch/franchise.
         const readReply = ({ r, t, d, msg }) => {
           const nw = scripts(t).filter(s => !base.has(s)).join('\n');
           const msgs = [...nw.matchAll(/(?:alert|Messagebox|MessageBox|ShowMessage)\s*\(\s*['"]([^'"]{0,200})/g)].map(x => x[1]);
@@ -250,7 +248,6 @@ async function checkPageInBrowser(cfg) {
         } else if (!m) {
           rec.result = msgs.length ? 'NEEDS EXTRA INPUT' : 'NO REPORT OPENED'; rec.detail = msgs.join(' | ');
         } else {
-          // 4. open the report viewer and check it
           const u = new URL(m[1], location.href);
           const r2 = await fetchT(u); const tt = await r2.text();
           const d2 = new DOMParser().parseFromString(tt, 'text/html');
@@ -299,11 +296,9 @@ async function checkPageInBrowser(cfg) {
   }
   return results;
 }
-// ----------------------------------------------------------------------------
 
-// ---------- Compare with the previous run ----------
-// Newest earlier MIS_Report_Snapshot_*.json in the folder; falls back to the newest CSV that has the
-// report definitions/objects columns (older runs, before snapshots existed).
+// Previous run for comparison: the newest earlier MIS_Report_Snapshot_*.json in the folder, or else
+// the newest CSV that has the definitions/objects columns (older runs, before snapshots existed).
 function loadPreviousRun(dir) {
   if (!fs.existsSync(dir)) return null;
   const files = fs.readdirSync(dir).sort().reverse(); // names end in a sortable timestamp
@@ -366,7 +361,6 @@ function compareRuns(prevRows, curRows) {
   return { added, removed, moved, columns };
 }
 
-// ---------- Email summary ----------
 // HTML email (inline styles + tables so it renders the same in Gmail/Outlook), Excel report attached.
 async function sendSummaryEmail({ rows, changes, previousName, from, to, minutes, attachments }) {
   const user = process.env.GMAIL_USER, pass = process.env.GMAIL_APP_PASSWORD, rcpt = process.env.GMAIL_TO || user;
@@ -458,9 +452,8 @@ async function sendSummaryEmail({ rows, changes, previousName, from, to, minutes
   console.log(`Summary emailed to ${rcpt}`);
 }
 
-// ---------- Reports that open their own page in a new tab ----------
-// Opens the page for real (it builds its table with its own scripts), then uses the headings of the
-// main data table as the report's objects.
+// Reports that open their own page in a new tab: open the page for real (it builds its table with its
+// own scripts), then use the headings of the main data table as the report's objects.
 async function checkNewTabReport(context, rec) {
   const t0 = Date.now();
   const tab = await context.newPage();
@@ -504,7 +497,7 @@ async function checkNewTabReport(context, rec) {
   await tab.close();
 }
 
-// ---------- Formatted Excel: one row per report, grouped by MIS page and section ----------
+// Formatted Excel: one row per report, grouped by MIS page and section.
 // Layout: S.No | Master Report Name | Report Type | Report Name | Report Definition | Objects Available | Check Result
 // Master Report Name / Report Type cells are merged over their group.
 // Red    = Report Name / Definition of a report that could not be viewed (error, timeout, nothing opened),
@@ -713,7 +706,7 @@ async function runWithContext(context) {
   }
   await Promise.all(Array.from({ length: Math.min(CONFIG.concurrency, pages.length) }, worker));
 
-  // ---------- Build outputs ----------
+  // Build outputs
   const rows = [];
   pages.forEach((pg, i) => (byPage[i] || []).forEach(r => rows.push({
     path: `MIS > ${pg.name}${r.section ? ' > ' + r.section : ''} > ${r.report}`,

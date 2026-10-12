@@ -28,15 +28,14 @@ test('Should email the combined PDI report for the day', async () => {
 
   const marker = emailedMarker(day);
   if (fs.existsSync(marker) && process.env.PDI_FORCE_EMAIL !== '1') {
-    console.log(`[STEP] Today's PDI email already went out (${fs.readFileSync(marker, 'utf8').trim()}) — not sending it again. Set PDI_FORCE_EMAIL=1 to resend.`);
+    console.log(`[STEP] Today's PDI email already went out (${fs.readFileSync(marker, 'utf8').trim()}), not sending it again. Set PDI_FORCE_EMAIL=1 to resend.`);
   } else if (await sendPdiReport(daily.results, daily.failures, daily.meta, daily.file) && process.env.PDI_EMAIL_REVIEW !== '1') {
-    // A review copy (PDI_EMAIL_REVIEW=1, to GMAIL_TO only) doesn't count as the day's email.
     fs.mkdirSync(path.dirname(marker), { recursive: true });
     fs.writeFileSync(marker, `sent ${new Date().toLocaleString('en-IN')}\n`);
   }
 
-  // Chassis with no usable VIN data (factory placeholders like "BIN SERIAL DUPLICATION") are a VIN-sheet
-  // issue, listed in the report — a warning here, as in the PDI run. Dealer failures and save errors still fail.
+  // No usable VIN data (factory notes like "BIN SERIAL DUPLICATION") is a VIN-sheet issue, so only a
+  // warning here, as in the PDI run. Dealer failures and save errors still fail.
   const noVin = problemsOf(daily.results.filter((r) => outcomeOf(r) === 'missing'), [], false);
   if (noVin.length) console.log(`[WARN] ${noVin.length} chassis with no usable VIN data (listed in the report):\n  ${noVin.slice(0, 20).join('\n  ')}`);
   const problems = problemsOf(daily.results.filter((r) => outcomeOf(r) !== 'missing'), daily.failures, false);

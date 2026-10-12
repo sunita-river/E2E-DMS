@@ -30,9 +30,8 @@ export class LoginPage {
     this.loginButton = page.getByRole('button', { name: 'Sign In' });
     this.riverUserLink = page.getByRole('link', { name: 'River User' });
 
-    // The dealer-code login form stays in the DOM (just hidden) when the River User form is
-    // shown, so a role/name lookup like the dealer flow's usernameInput can match both and
-    // trip Playwright's strict mode. Scope these to the River User form's own element IDs.
+    // The dealer-code form stays in the DOM (hidden) while the River User form is shown, so
+    // role/name lookups match both and hit strict mode. Use the River User form's own IDs.
     this.riverUserUsernameInput = page.locator('#UserName');
     this.riverUserPasswordInput = page.locator('#Password');
     this.riverUserSignInButton = page.locator('#CmdLogin');
@@ -43,39 +42,30 @@ export class LoginPage {
     this.log('[STEP 1] Navigating to login page...');
     await this.page.goto(url, { waitUntil: 'domcontentloaded' });
 
-    // The app's legacy ASP.NET report viewer renders blank under Playwright's fixed default
-    // viewport (fine in a manually-opened, maximized browser), so the context runs with
-    // viewport: null and this maximizes the main window explicitly via CDP instead of the
-    // riskier --start-maximized launch flag, which raced Chrome's window manager on startup.
-    // Skipped quietly where there's no real window to maximize (headless CI, non-Chromium).
+    // The ASP.NET report viewer renders blank in Playwright's fixed default viewport, so the
+    // context runs with viewport: null and the window is maximized here over CDP
+    // (--start-maximized raced Chrome's window manager). Skipped where there is no window.
     try {
       const session = await this.page.context().newCDPSession(this.page);
       const { windowId } = await session.send('Browser.getWindowForTarget');
-      // Chrome's CDP refuses to go straight from a minimized/fullscreen state to
-      // maximized (hit when re-navigating an already-open window across repeated
-      // logins, e.g. looping over dealers) — reset to 'normal' first, a no-op if
-      // it's already normal, then maximize.
+      // CDP won't go straight from minimized/fullscreen to maximized (seen on repeated
+      // logins in one window), so set 'normal' first.
       await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
       await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'maximized' } });
     } catch {
-      this.log('[STEP] Window maximize not available (headless?) — continuing.');
+      this.log('[STEP] Window maximize not available (headless?), continuing.');
     }
   }
 
   async login(creds: UserCredentials) {
-    
-
-    // Safely clear and fill inputs (handles missing/undefined credentials gracefully)
     await this.dealerCodeInput.fill(creds.dealercode || '');
 
-    // fill() sets the value but never blurs the field, and the app only fires its
-    // branch lookup on blur/change — so without an explicit Tab, the User Name
-    // field stays disabled and every following action hangs waiting for it.
+    // The branch lookup only fires on blur, and fill() doesn't blur; without the Tab the
+    // User Name field stays disabled.
     await this.dealerCodeInput.press('Tab');
 
-    // Entering the dealer code triggers an async lookup that populates the Branch
-    // dropdown; filling username/password before it resolves gets them wiped out
-    // by the re-render, so wait for the branch to actually load before continuing.
+    // The branch lookup re-renders the form and wipes anything typed before it finishes,
+    // so wait for the Branch dropdown to load.
     if (creds.dealercode) {
       await this.page
         .waitForFunction(
@@ -93,13 +83,10 @@ export class LoginPage {
 
     this.log('[STEP 2] Clicking Sign In button...');
     await this.loginButton.click();
-
-    // Allow server response processing
     await this.page.waitForTimeout(2000);
   }
 
-  // "River User" login skips the Dealer Code / Branch lookup entirely — it's a plain
-  // username + password sign-in, used for the salesforceValidUser-style credential.
+  // River User login has no Dealer Code / Branch step: just username and password.
   async loginAsRiverUser(creds: UserCredentials) {
     this.log('[STEP] Switching to River User login...');
     await this.riverUserLink.click();
@@ -110,16 +97,13 @@ export class LoginPage {
 
     this.log('[STEP] Clicking Sign In button...');
     await this.riverUserSignInButton.click();
-
-    // Allow server response processing
     await this.page.waitForTimeout(2000);
   }
 
   async verifyDashboard() {
     this.log('[STEP 3] Waiting for dashboard navigation...');
 
-    // Wait for main dashboard container or caption
-    // A wrong password / locked account stays on the login page — say so instead of a bare timeout.
+    // A wrong password or locked account stays on the login page; say so instead of a bare timeout.
     try {
       await this.page.locator('#ctl00_cpMain_DashboardCaption').waitFor({ state: 'visible', timeout: 30000 });
     } catch {
@@ -129,15 +113,13 @@ export class LoginPage {
         : `Dashboard did not load within 30s after login (page: ${this.page.url()}).`);
     }
 
-    // Safely handle spinner if active
     await this.page.locator('.spinner').waitFor({ state: 'detached', timeout: 10000 }).catch(() => {});
 
     this.log('[STEP 3] Verifying Dashboard visibility...');
 
-    // Unified Regex to catch either Sales or Service Dashboard links safely
     const dashboardLink = this.page.getByRole('link', { name: /(Sales|Service) Dashboard/i });
     await expect(dashboardLink.first()).toBeVisible({ timeout: 10000 });
-    this.log('✅ Dashboard verified successfully!');
+    this.log('[STEP 3] Dashboard verified.');
   }
 
  

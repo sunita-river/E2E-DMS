@@ -1,6 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
 import { PDFParse } from 'pdf-parse';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { LoginPage } from './models/LoginPage';
@@ -32,7 +33,7 @@ const yesterday = (() => {
 const REPORT_FROM = parseDateEnv('GSTR_FROM', new Date(2026, 8, 1));  // months are 0-based: 8 = September
 const REPORT_TO = parseDateEnv('GSTR_TO', yesterday);
 if (REPORT_TO < REPORT_FROM) {
-  throw new Error(`GSTR To date ${REPORT_TO.toDateString()} is before From date ${REPORT_FROM.toDateString()} — set GSTR_FROM/GSTR_TO.`);
+  throw new Error(`GSTR To date ${REPORT_TO.toDateString()} is before From date ${REPORT_FROM.toDateString()} - set GSTR_FROM/GSTR_TO.`);
 }
 
 const GSTR_REQUIRED_COLUMNS = ['InvoiceNo', 'InvoiceDate', 'ReferenceNo', 'ReportOn', 'TaxableAmount', 'TotalAmount', 'DiscountAmount', 'Chassis No'];
@@ -44,17 +45,14 @@ function todayDateLabel(): string {
   return dateLabel(REPORT_TO);
 }
 
-// DiscountAmount mixes two sources: the report's own raw value (e.g. "0.00") for rows
-// left untouched, and our PDF lookup's plain "0"/"7500" for Product Sale rows — normalize
-// both to the same bare-integer style (e.g. "0.00" -> "0") for consistency in the output.
+// DiscountAmount is either the report's own value ("0.00") or one read from the invoice PDF
+// ("7500"). Write both as plain numbers ("0.00" -> "0").
 function normalizeDiscountAmount(value: string): string {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? String(parsed) : value;
 }
 
-// Saves rows to <project root>/Output/<dealercode>_SalesGSTNReport_<fromDate>_<toDate>.xlsx,
-// creating the Output folder if it doesn't exist yet. Per-dealer files are meant to be
-// clubbed into one master Excel by hand after every dealer has been run.
+// <OUTPUT_DIR>/<dealercode>_SalesGSTNReport_<fromDate>_<toDate>.xlsx
 function outputFilePathFor(dealerCode: string): string {
   return path.join(OUTPUT_DIR, `${dealerCode}_SalesGSTNReport_${REPORT_FROM_DATE_LABEL}_${todayDateLabel()}.xlsx`);
 }
@@ -71,18 +69,16 @@ function readSavedDealerRows(dealerCode: string): (Record<string, string> & { Re
     .map((row) => ({ ...row, ReferenceNo: row.ReferenceNo ?? '' }));
 }
 
-// Post GST Discounts already read from invoice PDFs, keyed "<dealercode>|<ReferenceNo>". Once a
-// booking is invoiced its discount doesn't change, so later runs reuse it instead of opening the
-// invoice again — only new and not-yet-invoiced bookings are looked up, which is what keeps a
-// daily run short. Set GSTR_NO_CACHE=1 to ignore it and re-read every invoice (e.g. after an
-// invoice was cancelled and re-issued); fresh reads are still saved to it.
+// Post GST Discounts already read from invoice PDFs, keyed "<dealercode>|<ReferenceNo>". An
+// invoiced booking's discount doesn't change, so a daily run only opens new invoices.
+// GSTR_NO_CACHE=1 re-reads every invoice (e.g. after one was cancelled and re-issued).
 const DISCOUNT_CACHE_FILE = path.join(OUTPUT_DIR, 'gstr-discount-cache.json');
 
 function loadDiscountCache(): Record<string, string> {
   try {
     return JSON.parse(fs.readFileSync(DISCOUNT_CACHE_FILE, 'utf8'));
   } catch {
-    return {}; // no cache yet (first run) or unreadable — just look everything up
+    return {}; // first run, or unreadable: look everything up
   }
 }
 
@@ -91,7 +87,7 @@ function saveDiscountCache(cache: Record<string, string>) {
     fs.mkdirSync(path.dirname(DISCOUNT_CACHE_FILE), { recursive: true });
     fs.writeFileSync(DISCOUNT_CACHE_FILE, JSON.stringify(cache, null, 1));
   } catch (err) {
-    console.log(`[WARN] Could not save the discount cache (${String((err as Error).message).slice(0, 80)}) — next run will re-read these invoices.`);
+    console.log(`[WARN] Could not save the discount cache (${String((err as Error).message).slice(0, 80)}) - next run will re-read these invoices.`);
   }
 }
 
@@ -118,12 +114,60 @@ function saveRowsToExcel(dealerCode: string, rows: Record<string, string>[]): st
   } catch (err) {
     // Usually the file is open in Excel (Windows locks it). Save beside it instead of losing the run.
     const fallback = filePath.replace(/\.xlsx$/, `_${Date.now()}.xlsx`);
-    console.log(`[WARN] Could not write ${path.basename(filePath)} (${String((err as Error).message).slice(0, 80)}) — is it open in Excel? Saved as ${path.basename(fallback)} instead.`);
+    console.log(`[WARN] Could not write ${path.basename(filePath)} (${String((err as Error).message).slice(0, 80)}) - is it open in Excel? Saved as ${path.basename(fallback)} instead.`);
     XLSX.writeFile(workbook, fallback);
     return fallback;
   }
 
   return filePath;
+}
+
+// Everything the run expected in DMS but did not find (a report gone from the menu, missing
+// columns, bookings without an invoice, discounts that could not be read, dealers not finished).
+// Written to its own red-highlighted Excel and attached as GSTR-missing.json, which
+// tests/reporters/gmail-reporter.ts shows as a highlighted "Not found in DMS" section in the email.
+type MissingItem = { Dealer: string; Missing: string; Where: string; Details: string };
+const missingItems: MissingItem[] = [];
+
+function missingFilePath(): string {
+  return path.join(OUTPUT_DIR, `GSTR_Missing_${REPORT_FROM_DATE_LABEL}_${todayDateLabel()}.xlsx`);
+}
+
+async function saveMissingToExcel(items: MissingItem[]): Promise<string> {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Not found in DMS', { views: [{ state: 'frozen', ySplit: 1 }] });
+  sheet.columns = [
+    { header: 'No.', key: 'no', width: 6 },
+    { header: 'Dealer', key: 'Dealer', width: 12 },
+    { header: 'Missing', key: 'Missing', width: 34 },
+    { header: 'Where', key: 'Where', width: 44 },
+    { header: 'Details', key: 'Details', width: 90 },
+  ];
+  const fill = (argb: string): ExcelJS.Fill => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+  sheet.getRow(1).eachCell((c) => {
+    c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    c.fill = fill('FFB3261E');
+  });
+  if (!items.length) sheet.addRow({ no: '', Dealer: '', Missing: 'Nothing missing', Where: '', Details: 'Everything the run needed was found in DMS.' });
+  items.forEach((item, i) => {
+    const row = sheet.addRow({ no: i + 1, ...item });
+    row.eachCell({ includeEmpty: true }, (c) => {
+      c.fill = fill('FFFCE8E6');
+      c.font = { color: { argb: 'FFB3261E' } };
+      c.alignment = { vertical: 'top', wrapText: true };
+    });
+  });
+  const filePath = missingFilePath();
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  try {
+    await workbook.xlsx.writeFile(filePath);
+    return filePath;
+  } catch (err) {
+    const fallback = filePath.replace(/\.xlsx$/, `_${Date.now()}.xlsx`);
+    console.log(`[WARN] Could not write ${path.basename(filePath)} (${oneLine(err)}) - is it open in Excel? Saved as ${path.basename(fallback)} instead.`);
+    await workbook.xlsx.writeFile(fallback);
+    return fallback;
+  }
 }
 
 function printTable(headers: string[], rows: (string | number)[][]) {
@@ -151,28 +195,18 @@ function getField(row: Record<string, string>, ...names: string[]): string {
   return '';
 }
 
-// "Print Invoice" opens a popup whose URL renders a PDF directly
-// (ReportMs.aspx?outputtype=pdf) via the browser's native PDF viewer, so its
-// text isn't reachable through the DOM. Re-fetch that same URL through the
-// browser context's request API (shares the session's auth cookies) to get
-// the raw PDF bytes instead.
-//
-// A booking that hasn't reached the "Invoice & Insurance" stage yet has no
-// invoice, and clicking Print Invoice for it does nothing visible at all (no
-// popup, no dialog) — even though the Print Invoice dropdown itself is shown
-// (confirmed on 00184074: no popup on either attempt, even with 20s and a fresh
-// page). So a null return here means "not invoiced yet", not an error, and
-// callers should skip that reference rather than fail the run.
+// Print Invoice opens a popup showing the PDF in Chrome's viewer (ReportMs.aspx?outputtype=pdf),
+// which the DOM can't read, so the same URL is fetched again with the session's cookies.
+// Returns null when no popup opens: a booking not yet at "Invoice & Insurance" still shows the
+// dropdown but Print Invoice does nothing (seen on 00184074). That means not invoiced, not an error.
 async function getPrintInvoicePdfBuffer(page: Page): Promise<Buffer | null> {
   const popupPromise = page.waitForEvent('popup', { timeout: 8000 }).catch(() => null);
   await page.locator('#ctl00_cpMain_cmdPrintInvoice').click({ timeout: 15000 });
   const popup = await popupPromise;
   if (!popup) return null;
 
-  // Only the popup's address is needed — the PDF itself is fetched once below. So take the URL
-  // as soon as the popup navigates to it instead of letting the popup load the whole PDF first
-  // (that generated every invoice twice). If it lands somewhere other than the report page,
-  // fall back to waiting for it to finish loading, as before.
+  // Take the URL as soon as the popup navigates; letting it load meant DMS generated every
+  // invoice twice. Wait for the load only if it lands somewhere other than the report page.
   await popup.waitForURL((u) => u.href !== 'about:blank', { waitUntil: 'commit', timeout: 30000 }).catch(() => {});
   if (!/ReportMs\.aspx/i.test(popup.url())) await popup.waitForLoadState('load', { timeout: 30000 }).catch(() => {});
   const pdfUrl = popup.url();
@@ -184,8 +218,7 @@ async function getPrintInvoicePdfBuffer(page: Page): Promise<Buffer | null> {
   return response.body();
 }
 
-// Rejects if the promise hasn't settled in time — for steps that have no timeout of their own
-// (e.g. PDF parsing), so nothing can hang a CI run indefinitely.
+// For steps with no timeout of their own (e.g. PDF parsing), so nothing can hang a CI run.
 function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: NodeJS.Timeout;
   return Promise.race([
@@ -207,22 +240,18 @@ type ReportRow = Record<string, string> & { ReferenceNo: string };
 // anything unexpected so the caller can retry once and then warn.
 async function lookUpPostGstDiscount(page: Page, referenceNo: string): Promise<string | null> {
   await page.fill('#ctl00_cpMain_code', referenceNo, { timeout: 15000 });
-  // Wait for the search postback to reload the page before looking at it — otherwise the
-  // previous booking's Print Invoice button can still be on screen and get read by mistake.
-  // This waits for the page itself to change, not a response from a particular URL: the search
-  // used to post to ProductSaleWorkSheet.aspx but now posts to CustomerCenter.aspx (then
-  // redirects), and matching on the URL made every lookup time out when that changed.
-  // The click has its own shorter limit so a Show button covered by a leftover dropdown/popup
-  // fails with Playwright's "element intercepts pointer events" message, not a bare 60s timeout.
+  // Wait for the postback to reload the page, or the previous booking's Print Invoice button can
+  // be read by mistake. Waits on navigation rather than a URL: the search moved from
+  // ProductSaleWorkSheet.aspx to CustomerCenter.aspx once already. The shorter click timeout
+  // gives a clearer error when a leftover dropdown covers the Show button.
   await Promise.all([
     page.waitForEvent('framenavigated', { predicate: (f) => f === page.mainFrame(), timeout: 60000 }),
     page.click('#ctl00_cpMain_cmdShow', { timeout: 15000 }),
   ]);
   await page.waitForLoadState('load', { timeout: 60000 });
 
-  // A booking that hasn't reached the "Invoice & Insurance" stage yet (still at
-  // Booking/Payment/Pre-Invoice) has no invoice, so this control isn't rendered at all.
-  // Give it a few seconds to appear rather than checking the instant the page loads.
+  // Not rendered for bookings still at Booking/Payment/Pre-Invoice (no invoice yet). It can
+  // appear a moment after load, hence the short wait.
   const printDropdownToggle = page.locator('#ctl00_cpMain_PrintInvoiceFormat');
   if (!(await printDropdownToggle.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false))) return null;
 
@@ -233,8 +262,8 @@ async function lookUpPostGstDiscount(page: Page, referenceNo: string): Promise<s
   return (await withTimeout(findValueInInvoicePdf(pdfBuffer, 'Post GST Discount'), 60000, 'Reading the invoice PDF')) || '0';
 }
 
-// Closes whatever one booking's lookup can leave behind — invoice popups/tabs and the open
-// Print Invoice dropdown — so it can't cover the Show button for the next booking.
+// Closes invoice popups and the open Print Invoice dropdown so they can't cover the Show
+// button for the next booking.
 async function closeLeftovers(page: Page) {
   for (const other of page.context().pages()) {
     if (other !== page) await other.close().catch(() => {});
@@ -249,7 +278,7 @@ async function openProductSaleWorkSheet(page: Page, dealer: DealerCredentials) {
   const url = 'https://rivermobility.gaindms.com/Product/ProductSaleWorkSheet.aspx';
   await page.goto(url, { timeout: 60000 });
   if (await page.getByRole('button', { name: 'Sign In' }).isVisible().catch(() => false)) {
-    console.log(`[STEP] Dealer ${dealer.dealercode}: DMS session expired — signing in again...`);
+    console.log(`[STEP] Dealer ${dealer.dealercode}: DMS session expired - signing in again...`);
     const loginPage = new LoginPage(page);
     await loginPage.login(dealer);
     await loginPage.verifyDashboard();
@@ -274,15 +303,13 @@ async function resetSession(page: Page, username: string) {
     await page.locator(`a:has-text("${username}")`).click({ timeout: 10000 });
     await page.getByRole('link', { name: /Sign out/i }).click({ timeout: 10000 });
   } catch {
-    console.log('[STEP] Logout link not available — clearing the session instead.');
+    console.log('[STEP] Logout link not available - clearing the session instead.');
   }
   await page.context().clearCookies().catch(() => {});
 }
 
-// Scans the PDF's plain text for a line containing labelText and returns whatever
-// follows it on that same line (e.g. "Post GST Discount 0" -> "0"). The invoice's
-// discount line isn't drawn as a bordered table, so plain text scanning is what
-// actually finds it — confirmed across every reference number tested.
+// Returns the text after labelText on the same line ("Post GST Discount 0" -> "0"). The
+// discount isn't in a bordered table on the invoice, so plain text is the reliable way in.
 async function findValueInInvoicePdf(pdfBuffer: Buffer, labelText: string): Promise<string> {
   // An error page (HTML) instead of a PDF is the usual cause of "Invalid PDF structure".
   if (!pdfBuffer.subarray(0, 1024).toString('latin1').includes('%PDF')) {
@@ -321,9 +348,19 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
   const productWiseSalesHeading = page.getByRole('heading', { name: 'ProductWise Sales Details', level: 5 });
   await productWiseSalesHeading.waitFor({ state: 'visible', timeout: 30000 }).catch(async () => {
     const shown = await page.locator('h5:visible').allInnerTexts().catch(() => [] as string[]);
-    throw new ReportMissingError(`"ProductWise Sales Details" is not in MIS > Accounts Reports > GSTR Reports for dealer ` +
-      `${dealer.dealercode}. The page lists: ${shown.join(', ') || 'nothing'}. The DMS removed it from the menu ` +
-      `(first seen 08-Oct-2026); ask the DMS team where it went.`);
+    missingItems.push({
+      Dealer: dealer.dealercode,
+      Missing: 'Report: ProductWise Sales Details',
+      Where: 'MIS > Accounts Reports > GSTR Reports',
+      Details: `Not in the menu any more (first seen 08-Oct-2026). The page now lists: ${shown.join(', ') || 'nothing'}. ` +
+        'Sales Tax Details is not a replacement (no ReferenceNo / Chassis No). Raised with the DMS vendor.',
+    });
+    throw new ReportMissingError(`"ProductWise Sales Details" was not found at menu path ` +
+      `MIS > Accounts Reports > GSTR Reports (heading h5 "ProductWise Sales Details") for dealer ` +
+      `${dealer.dealercode}. That GSTR Reports page lists: ${shown.join(', ') || 'nothing'}. The DMS removed it from ` +
+      `the menu (first seen 08-Oct-2026) and the 08-Oct MIS check found no renamed copy in any other MIS menu ` +
+      `(Sales Tax Details lacks ReferenceNo and Chassis No). Ask the DMS vendor where it went; see ` +
+      `docs/GainDMS-vendor-ticket-2026-10-08.md.`);
   });
   await productWiseSalesHeading.click();
 
@@ -334,13 +371,12 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
   // The calendar clicks are only a convenience: if they fail (e.g. the popup renders
   // differently on a server), the check below types the dates in directly.
   await gstrReportViewer.setFromDate(String(REPORT_FROM.getDate()), MONTH_NAMES[REPORT_FROM.getMonth()], REPORT_FROM.getFullYear())
-    .catch((err) => console.log(`[WARN] From Date calendar click failed (${oneLine(err)}) — typing it instead.`));
+    .catch((err) => console.log(`[WARN] From Date calendar click failed (${oneLine(err)}) - typing it instead.`));
   await gstrReportViewer.setToDate(String(REPORT_TO.getDate()), MONTH_NAMES[REPORT_TO.getMonth()], REPORT_TO.getFullYear())
-    .catch((err) => console.log(`[WARN] To Date calendar click failed (${oneLine(err)}) — typing it instead.`));
+    .catch((err) => console.log(`[WARN] To Date calendar click failed (${oneLine(err)}) - typing it instead.`));
 
-  // The From calendar popup stays open after picking a day and, in a headed window, can sit
-  // over the To Date box — the To click then lands on the From calendar and To ends up as the
-  // From date (01/09/2026). Check both boxes and type the right date in if a click went astray.
+  // In a headed window the From calendar can stay open over the To box, so the To click lands
+  // on it and To ends up as the From date. Type the date in when a box shows the wrong one.
   for (const [input, date, label] of [
     [gstrReportViewer.fromDateInput, REPORT_FROM, 'From'],
     [gstrReportViewer.toDateInput, REPORT_TO, 'To'],
@@ -372,15 +408,19 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
   // redo it) and doesn't fail the run.
   if (reportRows.length === 0) {
     console.log(`[WARN] Dealer ${dealer.dealercode}: no records found for the selected date range.`);
+    missingItems.push({
+      Dealer: dealer.dealercode,
+      Missing: 'Records',
+      Where: 'ProductWise Sales Details',
+      Details: `No records for ${REPORT_FROM_DATE_LABEL} to ${todayDateLabel()}.`,
+    });
     test.info().annotations.push({ type: 'warning', description: `Dealer ${dealer.dealercode}: no records for the selected date range.` });
     saveRowsToExcel(dealer.dealercode, []);
     return [];
   }
 
-  // Only ReferenceNo is added here — any Discount Amount column the report already
-  // has for the other rows is left completely untouched. productSaleRows is a
-  // *filter* (not a copy) of the same objects, so filling in DiscountAmount during
-  // the lookup loop below updates only those rows within allRowsWithDiscount.
+  // productSaleRows holds the same objects, so discounts set in the loop below land in
+  // allRowsWithDiscount. Other rows keep the report's own DiscountAmount.
   const allRowsWithDiscount: ReportRow[] = reportRows.map((row) => ({
     ...row,
     ReferenceNo: getField(row, 'ReferenceNo'),
@@ -404,14 +444,14 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
   }
 
   const skipped: string[] = [];
+  const notInvoiced: string[] = [];
   let consecutiveFailures = 0;
   for (const row of rowsToLookUp) {
     console.log(`[STEP] Looking up Post GST Discount for reference ${row.ReferenceNo}...`);
     let discount: string | null = null;
     let lastError: unknown = null;
-    // One retry: the failures seen so far (error page instead of PDF, slow postback) were
-    // temporary and worked on the next attempt. The retry starts from a freshly opened search
-    // page (signing in again if needed) — retrying on the same stuck page just fails again.
+    // Failures so far (error page instead of PDF, slow postback) cleared on a second try, but
+    // only from a freshly opened search page; retrying on the stuck page fails again.
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         if (attempt === 2) await openProductSaleWorkSheet(page, dealer);
@@ -420,17 +460,17 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
         break;
       } catch (err) {
         lastError = err;
-        if (attempt === 1) console.log(`[STEP] Reference ${row.ReferenceNo}: attempt 1 failed (${oneLine(err)}) — reopening the search page and retrying once...`);
+        if (attempt === 1) console.log(`[STEP] Reference ${row.ReferenceNo}: attempt 1 failed (${oneLine(err)}) - reopening the search page and retrying once...`);
       }
     }
     await closeLeftovers(page);
     if (lastError) {
       // Leave the report's own DiscountAmount for this row and carry on with the next one.
-      console.log(`[WARN] Reference ${row.ReferenceNo}: discount could not be read after 2 attempts — left as in the report (${oneLine(lastError)}).`);
+      console.log(`[WARN] Reference ${row.ReferenceNo}: discount could not be read after 2 attempts - left as in the report (${oneLine(lastError)}).`);
       skipped.push(row.ReferenceNo);
       if (++consecutiveFailures >= MAX_CONSECUTIVE_LOOKUP_FAILURES) {
         saveDiscountCache(discountCache); // keep what this dealer did read before giving up
-        throw new Error(`Post GST Discount lookup failed for ${consecutiveFailures} bookings in a row (last: ${oneLine(lastError)}) — ` +
+        throw new Error(`Post GST Discount lookup failed for ${consecutiveFailures} bookings in a row (last: ${oneLine(lastError)}). ` +
           `DMS looks stuck, stopping this dealer so it is retried at the end.`);
       }
       // Don't carry a possibly stuck page into the next booking.
@@ -439,7 +479,8 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
     }
     consecutiveFailures = 0;
     if (discount === null) {
-      console.log(`[STEP] Reference ${row.ReferenceNo}: no Print Invoice option yet (not invoiced) — skipping.`);
+      console.log(`[STEP] Reference ${row.ReferenceNo}: no Print Invoice option yet (not invoiced) - skipping.`);
+      notInvoiced.push(row.ReferenceNo);
       continue;
     }
     row.DiscountAmount = discount;
@@ -452,6 +493,20 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
     test.info().annotations.push({
       type: 'warning',
       description: `Dealer ${dealer.dealercode}: discount not read for ${skipped.length} reference(s): ${skipped.join(', ')}`,
+    });
+    missingItems.push({
+      Dealer: dealer.dealercode,
+      Missing: 'Post GST Discount (could not be read)',
+      Where: 'Product Sale Work Sheet > Print Invoice',
+      Details: `${skipped.length} booking(s), DiscountAmount left as in the report: ${skipped.join(', ')}`,
+    });
+  }
+  if (notInvoiced.length) {
+    missingItems.push({
+      Dealer: dealer.dealercode,
+      Missing: 'Invoice (not invoiced yet)',
+      Where: 'Product Sale Work Sheet > Print Invoice',
+      Details: `${notInvoiced.length} booking(s) have no invoice, so no Post GST Discount: ${notInvoiced.join(', ')}`,
     });
   }
 
@@ -469,14 +524,12 @@ async function processDealer(page: Page, dealer: DealerCredentials): Promise<Rep
 test.describe('Vehicle Sales - Sales > Vehicle Sales', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  // All dealers run inside one test, reusing the same page/browser context, rather than
-  // one test() per dealer. Real Chrome (channel: 'chrome') quits its whole process when
-  // its last open window closes — with a separate test per dealer, each dealer's teardown
-  // would close the only remaining window and kill the browser before the next dealer's
-  // test could start (see the same note on downloadExcelDirect() in ReportViewerPage.ts).
+  // One test for all dealers: real Chrome (channel: 'chrome') exits when its last window
+  // closes, so a test per dealer would kill the browser at the first teardown
+  // (same issue as downloadExcelDirect() in ReportViewerPage.ts).
   test('Should login as each dealer and look up Product Sale discounts', async ({ page }) => {
     const dealers = (credentials.dealerUsers ?? []) as DealerCredentials[];
-    if (!dealers.length) throw new Error('resources/credentials.json has no "dealerUsers" — nothing to run.');
+    if (!dealers.length) throw new Error('resources/credentials.json has no "dealerUsers" - nothing to run.');
     const incomplete = dealers.filter((d) => !d.dealercode || !d.username || !d.password);
     if (incomplete.length) {
       throw new Error(`credentials.json: dealercode/username/password missing for ${incomplete.map((d) => d.dealercode || '(no code)').join(', ')}`);
@@ -507,52 +560,96 @@ test.describe('Vehicle Sales - Sales > Vehicle Sales', () => {
       }
     };
 
-    for (const dealer of dealers) {
-      const savedRows = readSavedDealerRows(dealer.dealercode);
-      if (savedRows) {
-        console.log(`[STEP] Dealer ${dealer.dealercode}: already saved for this date range (${savedRows.length} rows) — reusing ${outputFilePathFor(dealer.dealercode)}`);
-        rowsByDealer.set(dealer.dealercode, savedRows);
-        continue;
+    // Runs every dealer and the data checks. The finally below saves and emails the
+    // missing-items list whichever way this ends.
+    const runAllDealers = async () => {
+      for (const dealer of dealers) {
+        const savedRows = readSavedDealerRows(dealer.dealercode);
+        if (savedRows) {
+          console.log(`[STEP] Dealer ${dealer.dealercode}: already saved for this date range (${savedRows.length} rows) - reusing ${outputFilePathFor(dealer.dealercode)}`);
+          rowsByDealer.set(dealer.dealercode, savedRows);
+          continue;
+        }
+        if (!(await runDealer(dealer, 'attempt 1'))) failed.push({ dealer, error: null });
       }
-      if (!(await runDealer(dealer, 'attempt 1'))) failed.push({ dealer, error: null });
-    }
 
-    // Retry failed dealers once at the end (DMS hiccups are usually gone by then).
-    for (const f of [...failed]) {
-      if (await runDealer(f.dealer, 'retry')) failed.splice(failed.indexOf(f), 1);
-    }
+      // Retry failed dealers once at the end (DMS hiccups are usually gone by then).
+      for (const f of [...failed]) {
+        if (await runDealer(f.dealer, 'retry')) failed.splice(failed.indexOf(f), 1);
+      }
 
-    // MasterData is always written from whatever finished, in credentials.json order.
-    const masterRows = dealers.flatMap((d) => rowsByDealer.get(d.dealercode) ?? []);
-    const masterFilePath = saveRowsToExcel('MasterData', masterRows);
-    console.log(`[STEP] Saved combined master report (${masterRows.length} rows across ${rowsByDealer.size}/${dealers.length} dealers) to ${masterFilePath}`);
+      // MasterData is always written from whatever finished, in credentials.json order.
+      const masterRows = dealers.flatMap((d) => rowsByDealer.get(d.dealercode) ?? []);
+      const masterFilePath = saveRowsToExcel('MasterData', masterRows);
+      console.log(`[STEP] Saved combined master report (${masterRows.length} rows across ${rowsByDealer.size}/${dealers.length} dealers) to ${masterFilePath}`);
 
-    expect(masterRows.length, 'MasterData row count should equal the sum of the dealer files')
-      .toBe([...rowsByDealer.values()].reduce((n, rows) => n + rows.length, 0));
+      expect(masterRows.length, 'MasterData row count should equal the sum of the dealer files')
+        .toBe([...rowsByDealer.values()].reduce((n, rows) => n + rows.length, 0));
 
-    // Data checks per dealer, after every file is saved. Soft, so a data problem is reported
-    // alongside (not instead of) any dealers that could not be completed.
-    for (const dealer of dealers) {
-      const rows = rowsByDealer.get(dealer.dealercode);
-      if (!rows?.length) continue;
-      const productSaleRows = rows.filter((r) => getField(r, 'ReportOn') === 'Product Sale');
-      const problems = [
-        ...missingColumns(rows, GSTR_REQUIRED_COLUMNS),
-        // InvoiceNo is only required on Product Sale: RSA Service rows come without one (33 on 28-Sep).
-        ...blankValues(rows, ['ReportOn']),
-        ...datesOutsideRange(rows, 'InvoiceDate', REPORT_FROM, REPORT_TO),
-        ...nonNumeric(rows, ['TaxableAmount', 'TotalAmount']),
-        ...gstrTotalsMismatch(rows),
-        ...blankValues(productSaleRows, ['InvoiceNo', 'ReferenceNo', 'Chassis No']).map((p) => `Product Sale: ${p}`),
-        ...nonNumeric(productSaleRows, ['DiscountAmount']).map((p) => `Product Sale: ${p}`),
-      ];
-      expect.soft(problems, `Dealer ${dealer.dealercode} data problems:\n${problems.join('\n')}`).toEqual([]);
-    }
+      // Data checks per dealer, after every file is saved. Soft, so a data problem is reported
+      // alongside (not instead of) any dealers that could not be completed.
+      for (const dealer of dealers) {
+        const rows = rowsByDealer.get(dealer.dealercode);
+        if (!rows?.length) continue;
+        const productSaleRows = rows.filter((r) => getField(r, 'ReportOn') === 'Product Sale');
+        const absentColumns = GSTR_REQUIRED_COLUMNS.filter((c) => !(c in rows[0]!));
+        if (absentColumns.length) {
+          missingItems.push({
+            Dealer: dealer.dealercode,
+            Missing: `Column(s): ${absentColumns.join(', ')}`,
+            Where: 'MIS > Accounts Reports > GSTR Reports > ProductWise Sales Details',
+            Details: 'The report no longer has these columns, so they are blank in the output.',
+          });
+        }
+        const problems = [
+          ...missingColumns(rows, GSTR_REQUIRED_COLUMNS),
+          // InvoiceNo is only required on Product Sale: RSA Service rows come without one (33 on 28-Sep).
+          ...blankValues(rows, ['ReportOn']),
+          ...datesOutsideRange(rows, 'InvoiceDate', REPORT_FROM, REPORT_TO),
+          ...nonNumeric(rows, ['TaxableAmount', 'TotalAmount']),
+          ...gstrTotalsMismatch(rows),
+          ...blankValues(productSaleRows, ['InvoiceNo', 'ReferenceNo', 'Chassis No']).map((p) => `Product Sale: ${p}`),
+          ...nonNumeric(productSaleRows, ['DiscountAmount']).map((p) => `Product Sale: ${p}`),
+        ];
+        expect.soft(problems, `Dealer ${dealer.dealercode} data problems:\n${problems.join('\n')}`).toEqual([]);
+      }
 
-    // Fail the run (so CI/CD shows it red) only after everything that could be saved is saved.
-    if (failed.length) {
-      throw new Error(`${failed.length} dealer(s) could not be completed after a retry: ${failed.map((f) => f.dealer.dealercode).join(', ')}. ` +
-        `MasterData is missing their rows — rerun the test to fill them in (finished dealers are reused).`);
+      // Fail the run (so CI/CD shows it red) only after everything that could be saved is saved.
+      if (failed.length) {
+        throw new Error(`${failed.length} dealer(s) could not be completed after a retry: ${failed.map((f) => f.dealer.dealercode).join(', ')}. ` +
+          `MasterData is missing their rows; rerun the test to fill them in (finished dealers are reused).`);
+      }
+    };
+
+    try {
+      await runAllDealers();
+    } finally {
+      // Dealers that never got a result: still failing after the retry, or never reached
+      // because the run stopped (e.g. the report is gone from the menu).
+      for (const dealer of dealers) {
+        if (rowsByDealer.has(dealer.dealercode)) continue;
+        if (missingItems.some((m) => m.Dealer === dealer.dealercode && m.Missing.startsWith('Report:'))) continue; // already listed
+        const didFail = failed.some((f) => f.dealer.dealercode === dealer.dealercode);
+        missingItems.push({
+          Dealer: dealer.dealercode,
+          Missing: didFail ? 'Dealer data (failed after a retry)' : 'Dealer data (not run)',
+          Where: 'GSTR run',
+          Details: didFail ? 'Could not be completed after a retry. Its rows are not in MasterData.'
+            : 'The run stopped before this dealer. Its rows are not in MasterData.',
+        });
+      }
+      const missingFile = await saveMissingToExcel(missingItems).catch((err) => {
+        console.log(`[WARN] Could not save the missing-items Excel (${oneLine(err)}).`);
+        return '';
+      });
+      if (missingItems.length) {
+        console.log(`[WARN] ${missingItems.length} item(s) not found in DMS${missingFile ? ` - listed in ${missingFile}` : ''}:`);
+        printTable(['Dealer', 'Missing', 'Where'], missingItems.map((m) => [m.Dealer, m.Missing, m.Where]));
+      }
+      await test.info().attach('GSTR-missing.json', {
+        body: JSON.stringify({ title: 'GSTR Report - not found in DMS', file: missingFile, items: missingItems }),
+        contentType: 'application/json',
+      });
     }
   });
 });

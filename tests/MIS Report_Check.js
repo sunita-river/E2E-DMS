@@ -1,6 +1,6 @@
 /*
  * MIS Report Checker for River DMS - run from VS Code
- * ---------------------------------------------------
+ *
  * Setup (one time, in the VS Code terminal, inside this folder):
  *     npm install
  * Run:
@@ -21,7 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
-// ======================= SETTINGS =======================
+// Settings
 const CONFIG = {
   baseUrl: 'https://rivermobility.gaindms.com',
   startPage: '/Accounts/AccountsReports.aspx', // any page that shows the MIS menu
@@ -32,7 +32,6 @@ const CONFIG = {
   headless: false,       // true = no visible browser (only after first login)
   onlyPages: [],         // e.g. ['Workshop Reports', 'CRM Reports'] ; empty = all MIS pages
 };
-// ========================================================
 
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
@@ -46,7 +45,7 @@ function ask(q) {
   return new Promise(res => rl.question(q, a => { rl.close(); res(a); }));
 }
 
-// ---------- This function runs INSIDE the DMS page (browser side) ----------
+// Runs in the browser via page.evaluate, once per MIS page.
 async function checkPageInBrowser(cfg) {
   const ERR_RE = /(Server Error|Runtime Error|Exception|error occurred|Invalid (object|column)|Timeout expired|Could not find|Incorrect syntax|Conversion failed|Procedure or function|Something went wrong|Object reference|Gateway Time-out|Bad Gateway|Service Unavailable)/i;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -97,7 +96,7 @@ async function checkPageInBrowser(cfg) {
     const rec = { section, report: name, result: '', detail: '', rows: '', seconds: '' };
     const t0 = Date.now();
     try {
-      // 1. select the report (same as clicking it)
+      // Select the report the same way a click does
       const rs = document.getElementById('ctl00_cpMain_ReportSlno');
       let ok = false;
       for (const c of [...document.querySelectorAll(`a[onclick*="SetTab(this.id,${rid},"]`)].reverse()) {
@@ -108,12 +107,11 @@ async function checkPageInBrowser(cfg) {
       }
       if (!ok) { rec.result = 'COULD NOT SELECT'; rec.detail = 'Report link click failed'; }
       else {
-        // 2. fill dates
         const vis = [...f.querySelectorAll('input,select,textarea')]
           .filter(e => e.offsetParent && e.type !== 'hidden' && !/ddlSearchOption|txtSearch/i.test(e.id));
         vis.filter(e => e.tagName === 'INPUT' && (e.type === 'text' || e.type === '') && /Dat/i.test(e.id + e.name))
           .forEach(e => { e.value = /To|End/i.test(e.id) ? cfg.to : cfg.from; });
-        // 3. View Report (retry with first branch/franchise if the DMS asks)
+        // Retry with the first branch/franchise if the DMS asks for one
         let { r, t, d, msg } = await post();
         for (let i = 0; i < 2 && /select|enter/i.test(msg); i++) {
           vis.filter(e => e.tagName === 'SELECT' && (e.value === '' || e.value === '0') && e.options.length > 1)
@@ -130,7 +128,6 @@ async function checkPageInBrowser(cfg) {
         } else if (!m) {
           rec.result = msgs.length ? 'NEEDS EXTRA INPUT' : 'NO REPORT OPENED'; rec.detail = msgs.join(' | ');
         } else {
-          // 4. open the report viewer and check it
           const u = new URL(m[1], location.href);
           const r2 = await fetchT(u); const tt = await r2.text();
           const d2 = new DOMParser().parseFromString(tt, 'text/html');
@@ -158,7 +155,6 @@ async function checkPageInBrowser(cfg) {
   }
   return results;
 }
-// ----------------------------------------------------------------------------
 
 (async () => {
   const context = await chromium.launchPersistentContext(path.join(__dirname, 'dms-profile'), {
@@ -215,7 +211,7 @@ async function checkPageInBrowser(cfg) {
   }
   await Promise.all(Array.from({ length: Math.min(CONFIG.concurrency, pages.length) }, worker));
 
-  // ---------- Build outputs ----------
+  // Build outputs
   const rows = [];
   pages.forEach((pg, i) => (byPage[i] || []).forEach(r => rows.push({
     path: `MIS > ${pg.name}${r.section ? ' > ' + r.section : ''} > ${r.report}`,

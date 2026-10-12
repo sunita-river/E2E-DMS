@@ -22,16 +22,16 @@ export function vinFilePath(): string {
 
 export type ResultRow = Record<string, string>;
 export interface FailedDealer { dealer: string; error: string }
-// title labels the report, e.g. "PDI vehicle details · Daily summary" (default: "PDI vehicle details").
+// title labels the report (default: "PDI vehicle details").
 export interface ReportMeta { dryRun: boolean; startedAt: Date; finishedAt: Date; dealers: string[]; vinFile: string; title?: string; history?: PdiHistory }
 const titleOf = (m: ReportMeta) => m.title || 'PDI vehicle details';
 
 type Outcome = 'updated' | 'dryrun' | 'missing' | 'error';
-const OUTCOMES: { key: Outcome; label: string; icon: string; color: string }[] = [
-  { key: 'updated', label: 'Updated', icon: '✔', color: '#0ca30c' },
-  { key: 'dryrun', label: 'Filled (dry run)', icon: '◌', color: '#2a78d6' },
-  { key: 'missing', label: 'No usable VIN data', icon: '▲', color: '#fab219' },
-  { key: 'error', label: 'Error', icon: '✖', color: '#d03b3b' },
+const OUTCOMES: { key: Outcome; label: string; color: string }[] = [
+  { key: 'updated', label: 'Updated', color: '#0ca30c' },
+  { key: 'dryrun', label: 'Filled (dry run)', color: '#2a78d6' },
+  { key: 'missing', label: 'No usable VIN data', color: '#fab219' },
+  { key: 'error', label: 'Error', color: '#d03b3b' },
 ];
 
 export function outcomeOf(row: ResultRow): Outcome {
@@ -63,7 +63,7 @@ function totals(summary: DealerSummary[]) {
   return t;
 }
 
-// ---------------------------------------------------------------- email body (static)
+// Email body
 
 const fmtDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' });
 
@@ -129,10 +129,10 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
       `<td style="background:${o.color};height:14px;border-right:2px solid #ffffff;" width="${(s.counts[o.key] / maxTotal) * 100}%" title="${esc(o.label)}: ${s.counts[o.key]}"></td>`).join('');
     const rest = s.total < maxTotal ? `<td width="${((maxTotal - s.total) / maxTotal) * 100}%"></td>` : '';
     const bar = s.failed
-      ? `<span style="color:#d03b3b;font-weight:600;">✖ Dealer run failed</span>`
+      ? `<span style="color:#d03b3b;font-weight:600;">Dealer run failed</span>`
       : `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>${segs}${rest}</tr></table>`;
     const counts = OUTCOMES.filter((o) => s.counts[o.key] > 0).map((o) =>
-      `<span style="white-space:nowrap;margin-right:10px;"><span style="color:${o.color};">${o.icon}</span> ${esc(o.label)} <b>${s.counts[o.key]}</b></span>`).join('');
+      `<span style="white-space:nowrap;margin-right:10px;"><span style="color:${o.color};">${esc(o.label)}</span> <b>${s.counts[o.key]}</b></span>`).join('');
     return `
       <tr>
         <td style="${font}padding:10px 12px;border-bottom:1px solid #eeede8;font-weight:600;font-size:14px;color:#0b0b0b;" width="90">${esc(s.dealer)}</td>
@@ -144,10 +144,10 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
   const problems = results.filter((r) => ['missing', 'error'].includes(outcomeOf(r)));
   const failedDealers = summary.filter((s) => s.failed);
   const problemRows = [
-    ...failedDealers.map((s) => `<tr><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;">${esc(s.dealer)}</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;">—</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;color:#d03b3b;">✖ Dealer failed: ${esc(s.failed)}</td></tr>`),
+    ...failedDealers.map((s) => `<tr><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;">${esc(s.dealer)}</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;">-</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;color:#d03b3b;">Dealer failed: ${esc(s.failed)}</td></tr>`),
     ...problems.slice(0, 50).map((r) => {
       const o = OUTCOMES.find((x) => x.key === outcomeOf(r))!;
-      return `<tr><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;">${esc(r.Dealer)}</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;font-family:Consolas,monospace;">${esc(r.ChassisNo)}</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;"><span style="color:${o.color};">${o.icon}</span> ${esc(r.Status)}</td></tr>`;
+      return `<tr><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;">${esc(r.Dealer)}</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;font-family:Consolas,monospace;">${esc(r.ChassisNo)}</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;"><span style="color:${o.color};">${esc(r.Status)}</span></td></tr>`;
     }),
   ].join('');
   const problemsHtml = problemRows
@@ -156,8 +156,8 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
          <tr><th align="left" style="${font}padding:8px 10px;font-size:11px;color:#52514e;text-transform:uppercase;">Dealer</th><th align="left" style="${font}padding:8px 10px;font-size:11px;color:#52514e;text-transform:uppercase;">Chassis</th><th align="left" style="${font}padding:8px 10px;font-size:11px;color:#52514e;text-transform:uppercase;">Problem</th></tr>
          ${problemRows}
        </table>
-       ${problems.length > 50 ? `<p style="${font}font-size:12px;color:#52514e;">…and ${problems.length - 50} more — see the attached Excel.</p>` : ''}`
-    : `<p style="${font}font-size:14px;color:#0ca30c;margin:24px 0 0;">✔ No errors — every blank chassis was ${meta.dryRun ? 'filled' : 'updated'}.</p>`;
+       ${problems.length > 50 ? `<p style="${font}font-size:12px;color:#52514e;">...and ${problems.length - 50} more; see the attached Excel.</p>` : ''}`
+    : `<p style="${font}font-size:14px;color:#0ca30c;margin:24px 0 0;">No errors: every blank chassis was ${meta.dryRun ? 'filled' : 'updated'}.</p>`;
 
   const doneLabel = meta.dryRun ? 'Filled (dry run)' : 'Updated';
   const doneValue = meta.dryRun ? t.dryrun : t.updated;
@@ -167,7 +167,7 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
     <tr><td style="${font}background:#16325c;color:#ffffff;border-radius:12px 12px 0 0;padding:20px 22px;">
       <div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;opacity:.75;">River DMS · ${esc(titleOf(meta))}</div>
       <div style="font-size:22px;font-weight:700;margin-top:4px;">${doneValue} of ${t.blank} blank chassis ${meta.dryRun ? 'filled' : 'updated'}</div>
-      <div style="font-size:13px;opacity:.85;margin-top:6px;">${meta.dryRun ? '<b style="background:#2a78d6;padding:2px 8px;border-radius:10px;">DRY RUN — nothing saved</b> · ' : ''}${esc(fmtTime(meta.finishedAt))} · ${minutes(meta)} min · ${t.dealers} dealer(s)</div>
+      <div style="font-size:13px;opacity:.85;margin-top:6px;">${meta.dryRun ? '<b style="background:#2a78d6;padding:2px 8px;border-radius:10px;">DRY RUN, nothing saved</b> · ' : ''}${esc(fmtTime(meta.finishedAt))} · ${minutes(meta)} min · ${t.dealers} dealer(s)</div>
     </td></tr>
     <tr><td style="background:#fcfcfb;padding:12px 16px 22px;border-radius:0 0 12px 12px;">
       <table width="100%" cellpadding="0" cellspacing="0"><tr>
@@ -184,14 +184,12 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
       </table>
       ${problemsHtml}
       <p style="${font}font-size:12px;color:#52514e;margin:22px 0 0;line-height:1.5;">
-        📎 The full chassis list is in the attached Excel${masterAttached ? '; PDI_Master.xlsx has the day-wise Tracking sheet and the last 3 days\' chassis' : ''}.<br/>
+        The full chassis list is in the attached Excel${masterAttached ? '; PDI_Master.xlsx has the day-wise Tracking sheet and the last 3 days\' chassis' : ''}.<br/>
         Run from ${esc(process.env.GITHUB_ACTIONS ? 'GitHub Actions' : `local PC (${os.hostname()})`)} · VIN sheet: ${esc(path.basename(meta.vinFile))}
       </p>
     </td></tr>
   </table></td></tr></table></body></html>`;
 }
-
-// ---------------------------------------------------------------- interactive dashboard (attachment)
 
 // Shared by the daily dashboard and the PDI master dashboard.
 const DASH_CSS = `:root{color-scheme:light;--bg:#f4f3ef;--surface:#fcfcfb;--card:#ffffff;--line:#e4e3de;--grid:#eeede8;--ink:#0b0b0b;--ink2:#52514e;--ink3:#8a8984;--brand:#16325c;--chip:#efeee9;
@@ -263,10 +261,10 @@ ${DASH_CSS}</style></head>
 <body><div class="wrap">
 <header>
   <div><div class="eyebrow">River DMS · ${esc(titleOf(meta))}</div><h1 id="headline"></h1><div class="sub" id="sub"></div></div>
-  <button class="theme" id="theme" type="button" aria-label="Toggle dark mode">◐ Theme</button>
+  <button class="theme" id="theme" type="button" aria-label="Toggle dark mode">Theme</button>
 </header>
 <section class="tiles" id="tiles"></section>
-<section class="card errbox" id="dealerErrors" hidden><h2>✖ Dealers that failed</h2><ul id="dealerErrList"></ul></section>
+<section class="card errbox" id="dealerErrors" hidden><h2>Dealers that failed</h2><ul id="dealerErrList"></ul></section>
 <section class="card">
   <h2>Outcome by dealer</h2><div class="hint">Click a dealer to filter the table below. Hover a segment for its count.</div>
   <div class="legend" id="legend"></div>
@@ -275,7 +273,7 @@ ${DASH_CSS}</style></head>
 <section class="card">
   <h2>Chassis details</h2>
   <div class="filters" id="outcomeFilters"></div>
-  <div class="filters"><input type="search" id="q" placeholder="Search chassis, engine, battery, charger or status…"><span class="count" id="count"></span></div>
+  <div class="filters"><input type="search" id="q" placeholder="Search chassis, engine, battery, charger or status..."><span class="count" id="count"></span></div>
   <div class="tablewrap"><table><thead><tr id="thead"></tr></thead><tbody id="tbody"></tbody></table></div>
 </section>
 <div class="sub">Generated ${esc(fmtTime(meta.finishedAt))} · VIN sheet: ${esc(path.basename(meta.vinFile))}</div>
@@ -289,7 +287,7 @@ const O = Object.fromEntries(D.outcomes.map((o) => [o.key, o]));
 const cssVar = { updated: 'var(--good)', dryrun: 'var(--info)', missing: 'var(--warn)', error: 'var(--crit)' };
 const state = { dealer: null, outcomes: new Set(), q: '', sort: { key: 'dealer', dir: 1 } };
 
-// theme toggle (remembered per browser when storage is available)
+// Theme choice is remembered per browser when storage is available.
 try { const t = localStorage.getItem('pdi-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
 $('theme').onclick = () => {
   const dark = getComputedStyle(document.documentElement).colorScheme === 'dark';
@@ -301,10 +299,10 @@ const sum = (k) => D.dealers.reduce((a, d) => a + d.counts[k], 0);
 const total = D.dealers.reduce((a, d) => a + d.total, 0);
 const failedDealers = D.dealers.filter((d) => d.failed);
 const done = D.meta.dryRun ? sum('dryrun') : sum('updated');
-const pct = (n) => total ? Math.round((n / total) * 100) + '%' : '—';
+const pct = (n) => total ? Math.round((n / total) * 100) + '%' : '-';
 
 $('headline').textContent = done + ' of ' + total + ' blank chassis ' + (D.meta.dryRun ? 'filled' : 'updated');
-$('sub').innerHTML = (D.meta.dryRun ? '<span class="badge">DRY RUN — nothing saved</span>' : '') +
+$('sub').innerHTML = (D.meta.dryRun ? '<span class="badge">DRY RUN, nothing saved</span>' : '') +
   esc(D.meta.finished) + ' · ' + D.meta.minutes + ' min · ' + D.dealers.length + ' dealer(s)';
 
 const tiles = [
@@ -317,11 +315,11 @@ $('tiles').innerHTML = tiles.map((t) => '<div class="tile" style="--accent:' + t
 
 if (failedDealers.length) {
   $('dealerErrors').hidden = false;
-  $('dealerErrList').innerHTML = failedDealers.map((d) => '<li><b>' + esc(d.dealer) + '</b> — ' + esc(d.failed) + '</li>').join('');
+  $('dealerErrList').innerHTML = failedDealers.map((d) => '<li><b>' + esc(d.dealer) + '</b>: ' + esc(d.failed) + '</li>').join('');
 }
 
 const shown = D.outcomes.filter((o) => D.dealers.some((d) => d.counts[o.key] > 0));
-$('legend').innerHTML = shown.map((o) => '<span><i style="background:' + cssVar[o.key] + '"></i>' + esc(o.icon + ' ' + o.label) + '</span>').join('');
+$('legend').innerHTML = shown.map((o) => '<span><i style="background:' + cssVar[o.key] + '"></i>' + esc(o.label) + '</span>').join('');
 
 const tip = $('tip');
 const showTip = (e, text) => { tip.textContent = text; tip.style.opacity = 1; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY + 12) + 'px'; };
@@ -333,7 +331,7 @@ function renderDealers() {
   const clean = D.dealers.filter((d) => !d.failed && !d.total).map((d) => d.dealer);
   $('dealers').innerHTML = D.dealers.filter((d) => d.failed || d.total).map((d) => {
     let bar;
-    if (d.failed) bar = '<div class="failed">✖ Run failed</div>';
+    if (d.failed) bar = '<div class="failed">Run failed</div>';
     else bar = '<div class="bar" style="width:' + (d.total / max) * 100 + '%">' + D.outcomes.filter((o) => d.counts[o.key])
       .map((o) => '<span data-tip="' + esc(d.dealer + ' · ' + o.label + ': ' + d.counts[o.key]) + '" style="flex:' + d.counts[o.key] + ';background:' + cssVar[o.key] + '"></span>').join('') + '</div>';
     return '<div class="drow' + (state.dealer === d.dealer ? ' sel' : '') + '" data-dealer="' + esc(d.dealer) + '" role="button" tabindex="0" aria-pressed="' + (state.dealer === d.dealer) + '">' +
@@ -349,8 +347,8 @@ function renderDealers() {
 
 function renderOutcomeFilters() {
   $('outcomeFilters').innerHTML = '<button class="chip" data-o="" aria-pressed="' + (state.outcomes.size === 0) + '">All</button>' +
-    shown.map((o) => '<button class="chip" data-o="' + o.key + '" aria-pressed="' + state.outcomes.has(o.key) + '">' + esc(o.icon + ' ' + o.label) + '</button>').join('') +
-    (state.dealer ? '<button class="chip" data-clear-dealer aria-pressed="true">Dealer ' + esc(state.dealer) + ' ✕</button>' : '');
+    shown.map((o) => '<button class="chip" data-o="' + o.key + '" aria-pressed="' + state.outcomes.has(o.key) + '">' + esc(o.label) + '</button>').join('') +
+    (state.dealer ? '<button class="chip" data-clear-dealer aria-pressed="true">Dealer ' + esc(state.dealer) + ' (clear)</button>' : '');
   document.querySelectorAll('#outcomeFilters .chip').forEach((b) => b.onclick = () => {
     if (b.hasAttribute('data-clear-dealer')) { state.dealer = null; renderDealers(); }
     else if (!b.dataset.o) state.outcomes.clear();
@@ -375,9 +373,9 @@ function renderTable() {
     state.sort = { key: th.dataset.k, dir: state.sort.key === th.dataset.k ? -state.sort.dir : 1 }; renderTable();
   });
   $('tbody').innerHTML = rows.length ? rows.map((r) => '<tr>' + COLS.map((c) => {
-    if (c.key === 'status') return '<td class="st"><span style="color:' + cssVar[r.outcome] + '">' + O[r.outcome].icon + '</span> <b>' + esc(O[r.outcome].label) + '</b>' +
+    if (c.key === 'status') return '<td class="st"><b style="color:' + cssVar[r.outcome] + '">' + esc(O[r.outcome].label) + '</b>' +
       (r.outcome === 'error' || /\\(/.test(r.status) ? '<div style="color:var(--ink2);font-size:12px;white-space:normal">' + esc(r.status) + '</div>' : '') + '</td>';
-    return '<td' + (c.mono ? ' class="mono"' : '') + '>' + esc(r[c.key] || '—') + '</td>';
+    return '<td' + (c.mono ? ' class="mono"' : '') + '>' + esc(r[c.key] || '-') + '</td>';
   }).join('') + '</tr>').join('') : '<tr><td colspan="' + COLS.length + '" style="color:var(--ink3);text-align:center;padding:24px">No chassis match these filters.</td></tr>';
   $('count').textContent = rows.length + ' of ' + D.rows.length + ' chassis';
 }
@@ -388,10 +386,8 @@ renderTable();
 </script></body></html>`;
 }
 
-// ---------------------------------------------------------------- PDI master dashboard (Output/PDI_Master.html)
-
-// One page over every day in the PDI master: totals, a day-wise outcome chart, updated chassis per
-// dealer per day, and every chassis row (filter by day, dealer or outcome; search; sort).
+// Output/PDI_Master.html: totals, a day-wise outcome chart, updated chassis per dealer per day, and
+// every chassis row (filter by day, dealer or outcome; search; sort).
 function buildMasterDashboardHtml(days: { day: string; rows: ResultRow[] }[], generatedAt: Date): string {
   const sorted = [...days].sort((a, b) => a.day.localeCompare(b.day));
   const data = {
@@ -417,7 +413,7 @@ ${DASH_CSS}
 <body><div class="wrap">
 <header>
   <div><div class="eyebrow">River DMS · PDI master</div><h1 id="headline"></h1><div class="sub" id="sub"></div></div>
-  <button class="theme" id="theme" type="button" aria-label="Toggle dark mode">◐ Theme</button>
+  <button class="theme" id="theme" type="button" aria-label="Toggle dark mode">Theme</button>
 </header>
 <section class="tiles" id="tiles"></section>
 <section class="card">
@@ -432,7 +428,7 @@ ${DASH_CSS}
 <section class="card">
   <h2>Chassis details</h2>
   <div class="filters" id="outcomeFilters"></div>
-  <div class="filters"><input type="search" id="q" placeholder="Search dealer, chassis, engine, battery, charger or status…"><span class="count" id="count"></span></div>
+  <div class="filters"><input type="search" id="q" placeholder="Search dealer, chassis, engine, battery, charger or status..."><span class="count" id="count"></span></div>
   <div class="tablewrap"><table><thead><tr id="thead"></tr></thead><tbody id="tbody"></tbody></table></div>
 </section>
 <div class="sub">Generated ${esc(data.generated)} · from Output/PDI_Daily_&lt;day&gt;.xlsx</div>
@@ -467,7 +463,7 @@ const updatedChassis = new Set(D.rows.filter((r) => r.outcome === 'updated').map
 const open = [...latest.values()].filter((r) => r.outcome !== 'updated');
 const openOf = (k) => open.filter((r) => r.outcome === k).length;
 
-const range = D.days.length ? fmtDay(D.days[0]) + (D.days.length > 1 ? ' – ' + fmtDay(D.days[D.days.length - 1]) : '') : 'no days yet';
+const range = D.days.length ? fmtDay(D.days[0]) + (D.days.length > 1 ? ' to ' + fmtDay(D.days[D.days.length - 1]) : '') : 'no days yet';
 $('headline').textContent = updatedChassis.size + ' chassis updated in the last ' + D.days.length + ' day(s)';
 $('sub').textContent = range + ' · ' + latest.size + ' distinct blank chassis seen';
 
@@ -480,7 +476,7 @@ const tiles = [
 $('tiles').innerHTML = tiles.map((t) => '<div class="tile" style="--accent:' + t.a + '"><div class="v">' + t.v + '</div><div class="l">' + esc(t.l) + '</div><div class="p">' + esc(t.p) + '</div></div>').join('');
 
 const shown = D.outcomes.filter((o) => byDay.some((d) => d.counts[o.key] > 0));
-$('legend').innerHTML = shown.map((o) => '<span><i style="background:' + cssVar[o.key] + '"></i>' + esc(o.icon + ' ' + o.label) + '</span>').join('');
+$('legend').innerHTML = shown.map((o) => '<span><i style="background:' + cssVar[o.key] + '"></i>' + esc(o.label) + '</span>').join('');
 
 const tip = $('tip');
 const showTip = (e, text) => { tip.textContent = text; tip.style.opacity = 1; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY + 12) + 'px'; };
@@ -523,8 +519,8 @@ function renderDealerTable() {
 
 function renderOutcomeFilters() {
   $('outcomeFilters').innerHTML = '<button class="chip" data-o="" aria-pressed="' + (state.outcomes.size === 0) + '">All</button>' +
-    shown.map((o) => '<button class="chip" data-o="' + o.key + '" aria-pressed="' + state.outcomes.has(o.key) + '">' + esc(o.icon + ' ' + o.label) + '</button>').join('') +
-    (state.day ? '<button class="chip" data-clear-day aria-pressed="true">' + esc(fmtDay(state.day)) + ' ✕</button>' : '');
+    shown.map((o) => '<button class="chip" data-o="' + o.key + '" aria-pressed="' + state.outcomes.has(o.key) + '">' + esc(o.label) + '</button>').join('') +
+    (state.day ? '<button class="chip" data-clear-day aria-pressed="true">' + esc(fmtDay(state.day)) + ' (clear)</button>' : '');
   document.querySelectorAll('#outcomeFilters .chip').forEach((b) => b.onclick = () => {
     if (b.hasAttribute('data-clear-day')) { state.day = null; renderAll(); return; }
     if (!b.dataset.o) state.outcomes.clear();
@@ -550,9 +546,9 @@ function renderTable() {
   });
   $('tbody').innerHTML = rows.length ? rows.map((r) => '<tr>' + COLS.map((c) => {
     if (c.key === 'day') return '<td style="white-space:nowrap">' + esc(fmtDay(r.day)) + '</td>';
-    if (c.key === 'status') return '<td class="st"><span style="color:' + cssVar[r.outcome] + '">' + O[r.outcome].icon + '</span> <b>' + esc(O[r.outcome].label) + '</b>' +
+    if (c.key === 'status') return '<td class="st"><b style="color:' + cssVar[r.outcome] + '">' + esc(O[r.outcome].label) + '</b>' +
       (r.outcome !== 'updated' || /\\(/.test(r.status) ? '<div style="color:var(--ink2);font-size:12px;white-space:normal">' + esc(r.status) + '</div>' : '') + '</td>';
-    return '<td' + (c.mono ? ' class="mono"' : '') + '>' + esc(r[c.key] || '—') + '</td>';
+    return '<td' + (c.mono ? ' class="mono"' : '') + '>' + esc(r[c.key] || '-') + '</td>';
   }).join('') + '</tr>').join('') : '<tr><td colspan="' + COLS.length + '" style="color:var(--ink3);text-align:center;padding:24px">No chassis match these filters.</td></tr>';
   $('count').textContent = rows.length + ' of ' + D.rows.length + ' rows';
 }
@@ -573,8 +569,6 @@ export function writePdiMasterDashboard(days: { day: string; rows: ResultRow[] }
     console.log(`[WARN] Could not save the PDI master dashboard: ${String((err as Error).message).slice(0, 120)}`);
   }
 }
-
-// ---------------------------------------------------------------- send
 
 // A run passes only when every blank chassis was updated (or filled, in a dry run) and no dealer
 // failed. Returns one line per problem; empty = passed. Used for both the email and the test result.
@@ -606,7 +600,7 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
   const summary = summarize(results, meta, failed);
   writePdiDashboard(results, failed, meta, excelFile); // kept in Output/ for local use, not emailed
   if (process.env.PDI_SEND_EMAIL === '0') {
-    console.log('[STEP] PDI_SEND_EMAIL=0 — report email skipped.');
+    console.log('[STEP] PDI_SEND_EMAIL=0, report email skipped.');
     return false;
   }
   // Sent whether or not the run fully passed: problems are listed under "Needs attention" and
@@ -616,14 +610,14 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
   const pass = process.env.GMAIL_APP_PASSWORD;
   const to = process.env.GMAIL_TO || user;
   if (!user || !pass || !to) {
-    console.log('[STEP] Report email skipped — GMAIL_USER / GMAIL_APP_PASSWORD not set in .env.');
+    console.log('[STEP] Report email skipped: GMAIL_USER / GMAIL_APP_PASSWORD not set in .env.');
     return false;
   }
 
   const t = totals(summary);
   const done = meta.dryRun ? t.dryrun : t.updated;
-  let subject = `${meta.title ? meta.title + ' — ' : 'PDI details '}${meta.dryRun ? '[DRY RUN] filled' : 'updated'}: ${done}/${t.blank} across ${t.dealers} dealer(s)` +
-    `${problems.length ? ` — ⚠ ${problems.length} need attention` : ''} — ${meta.finishedAt.toISOString().slice(0, 10)}`;
+  let subject = `${meta.title ? meta.title + ' - ' : 'PDI details '}${meta.dryRun ? '[DRY RUN] filled' : 'updated'}: ${done}/${t.blank} across ${t.dealers} dealer(s)` +
+    `${problems.length ? ` - ${problems.length} need attention` : ''} - ${meta.finishedAt.toISOString().slice(0, 10)}`;
   // PDI_CC (the PDI audience) only on real runs; a dry run goes to GMAIL_TO alone. PDI_EMAIL_REVIEW=1
   // also sends to GMAIL_TO alone, marked [REVIEW], so the owner can check it before it goes to everyone.
   const review = process.env.PDI_EMAIL_REVIEW === '1';
@@ -640,7 +634,7 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
       to,
       ...(cc ? { cc } : {}),
       subject,
-      text: summary.map((s) => `${s.dealer}: ${s.failed ? 'FAILED — ' + s.failed : `${s.counts.updated + s.counts.dryrun}/${s.total} done, ${s.counts.missing} not in VIN sheet, ${s.counts.error} error(s)`}`).join('\n'),
+      text: summary.map((s) => `${s.dealer}: ${s.failed ? 'FAILED: ' + s.failed : `${s.counts.updated + s.counts.dryrun}/${s.total} done, ${s.counts.missing} not in VIN sheet, ${s.counts.error} error(s)`}`).join('\n'),
       html: buildEmailHtml(summary, results, meta, master.length > 0),
       attachments: [
         { filename: path.basename(excelFile), path: excelFile },

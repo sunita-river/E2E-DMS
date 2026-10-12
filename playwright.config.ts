@@ -61,7 +61,7 @@ export default defineConfig({
         '--disable-client-side-phishing-detection',
         '--disable-popup-blocking',
         // "Print Invoice" (GSTR Report.spec.ts) opens a popup that calls window.print()
-        // automatically, which otherwise pops Chrome's native OS print-preview dialog —
+        // automatically, which otherwise pops Chrome's native OS print-preview dialog:
         // a real system window page.close() can't dismiss via CDP, leaving it stuck open
         // across every iteration of that test's reference-number loop. This flag silently
         // bypasses that dialog instead of showing it.

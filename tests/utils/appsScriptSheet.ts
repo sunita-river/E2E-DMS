@@ -13,7 +13,7 @@ export async function pushRowsToSheet(headers: (string | number)[], rows: (strin
   }
 
   if (rows.length === 0) {
-    console.log('[STEP] No rows to push to Google Sheets — skipping.');
+    console.log('[STEP] No rows to push to Google Sheets - skipping.');
     return;
   }
 

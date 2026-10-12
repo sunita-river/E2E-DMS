@@ -1,6 +1,6 @@
 // Deploy this bound to the target spreadsheet: Extensions > Apps Script, paste this in,
 // then Deploy > New deployment > type "Web app", execute as "Me", access "Anyone" (or
-// "Anyone with Google account" if that's acceptable — "Anyone" is required if the test
+// "Anyone with Google account" if that's acceptable; "Anyone" is required if the test
 // machine won't be logged into a Google account when it calls this).
 //
 // Copy the resulting /exec URL into this project's .env as SHEETS_WEB_APP_URL.

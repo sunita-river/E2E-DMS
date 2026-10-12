@@ -4,22 +4,20 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-// Reports over the viewer's display limit (1000 rows) don't render #GrdMain at all —
-// the viewer shows a "more than the 1000-record display limit" banner and downloads
-// the full report as Excel instead. Rows are cached per report tab so the several
-// grid reads a test makes (count, dealer codes, rows) share one download/parse.
+// Reports over the viewer's 1000-row display limit don't render #GrdMain; the viewer shows a
+// "record display limit" banner and downloads the report as Excel instead. Rows are cached per
+// report tab so repeated reads share one download.
 const autoDownloads = new WeakMap<Page, Promise<Download | null>>();
 const rowCache = new WeakMap<Page, Promise<Record<string, string>[]>>();
-// When each report tab was opened — only Excel files newer than this count as its download.
+// When each report tab was opened; only Excel files newer than this count as its download.
 const reportOpenedAt = new WeakMap<Page, number>();
 
 // Over-limit Excel files are kept here (Playwright's own copy is deleted when the run ends),
 // and the rows are read from the kept file. Override with REPORT_DOWNLOAD_DIR.
 const DOWNLOAD_DIR = process.env.REPORT_DOWNLOAD_DIR || path.join(process.cwd(), 'Downloads');
 
-// Newest .xls/.xlsx in the download folders modified at or after `since`, or null.
-// Fallback for when the download event never reached Playwright but the browser still
-// saved the file (e.g. into the Windows Downloads folder).
+// Newest .xls/.xlsx in the download folders modified since `since`, or null. Used when the
+// download event never reached Playwright but the browser still saved the file.
 function newestExcelSince(since: number): string | null {
   const dirs = [DOWNLOAD_DIR, path.join(os.homedir(), 'Downloads')];
   const candidates = dirs.flatMap((dir) => {
@@ -36,10 +34,8 @@ function newestExcelSince(since: number): string | null {
   return recent[0]?.file ?? null;
 }
 
-// Shared behavior for report screens reached via the "View Report" link:
-// date range pickers, opening the report in its own tab, and reading/
-// interacting with the resulting grid. Enquiry List and Product-wise Sales
-// Details report pages both extend this.
+// Shared parts of the report screens opened with "View Report": date pickers, the report tab
+// and reading its grid.
 export class ReportViewerPage {
   readonly page: Page;
   readonly fromDateInput: Locator;
@@ -47,10 +43,8 @@ export class ReportViewerPage {
   readonly viewReportLink: Locator;
   readonly excelDownloadLink: Locator;
 
-  // Most report pages use #ctl00_cpMain_FromDate / ctl00$cpMain$ToDate for their date
-  // pickers, but some (e.g. the Accounts > GSTR Reports > ProductWise Sales Details
-  // page) use ...FromDat / ...ToDat instead — dateInputSelectors lets callers override
-  // the defaults for those without duplicating the calendar navigation logic below.
+  // Most report pages use #ctl00_cpMain_FromDate / ctl00$cpMain$ToDate; some (e.g. GSTR
+  // ProductWise Sales Details) use ...FromDat / ...ToDat, so callers can pass their own.
   constructor(page: Page, dateInputSelectors?: { from: string; to: string }) {
     this.page = page;
     this.fromDateInput = page.locator(dateInputSelectors?.from ?? '#ctl00_cpMain_FromDate');
@@ -59,25 +53,17 @@ export class ReportViewerPage {
     this.excelDownloadLink = page.getByRole('link', { name: ' Excel Download' });
   }
 
-  // Both the From and To date pickers keep their calendar popup markup in the DOM at
-  // once (only one is actually visible at a time), so an unscoped day-text locator
-  // matches both and trips Playwright's strict mode. Scope to the visible calendar.
-  //
-  // The visible calendar itself also shows leading/trailing days from adjacent
-  // months (grayed out, but still :visible) to fill out the grid, so e.g. "26"
-  // can match both a real August 26 cell and a leftover July 26 cell in the same
-  // popup. Each cell's title attribute carries the full date ("Wednesday, August
-  // 26, 2026"), so require the target month name there too to disambiguate.
+  // Both calendars stay in the DOM, so scope to the visible one. It also shows days from the
+  // adjacent months (still :visible), so match the month name in the cell's title
+  // ("Wednesday, August 26, 2026") as well.
   private calendarDay(day: string, monthName: string): Locator {
     return this.page
       .locator(`.ajax__calendar_day:visible[title*="${monthName}"]`)
       .filter({ hasText: new RegExp(`^${day}$`) });
   }
 
-  // The calendar always opens on the current month, so a fixed target date earlier in
-  // the year (e.g. 10/08/2026, opened in September or later) needs stepping back via
-  // the prev-month arrow until the header title (e.g. "August, 2026") matches. Capped
-  // at 24 steps so a bad month/year combination fails loudly instead of looping.
+  // The calendar opens on the current month; step back until the title (e.g. "August, 2026")
+  // matches. Capped at 24 steps so a bad month/year fails instead of looping.
   private async navigateCalendarToMonth(monthName: string, year: number) {
     const title = this.page.locator('.ajax__calendar_title:visible');
     const prevArrow = this.page.locator('.ajax__calendar_prev:visible');
@@ -89,9 +75,7 @@ export class ReportViewerPage {
     throw new Error(`Calendar did not reach ${monthName} ${year} after 24 prev-month clicks.`);
   }
 
-  // day/month/year pin the picker to one exact date (e.g. setFromDate('10', 'August', 2026)
-  // for a fixed 10/08/2026 start date). Omitting month/year keeps the old behavior of
-  // picking that day in whichever month the calendar already has open (i.e. "today").
+  // Without month/year, picks the day in the month the calendar opens on (the current month).
   async setFromDate(day: string, monthName?: string, year?: number) {
     await this.fromDateInput.click();
     const targetMonth = monthName ?? new Date().toLocaleString('en-US', { month: 'long' });
@@ -106,36 +90,28 @@ export class ReportViewerPage {
     await this.calendarDay(day, targetMonth).click();
   }
 
-  /** Sets both From and To date pickers to the same day (e.g. yesterday). */
+  // Sets From and To to the same day in the current month.
   async setDateRange(date: Date) {
     const day = String(date.getDate());
     await this.setFromDate(day);
     await this.setToDate(day);
   }
 
-  // Clicking "Excel Download" on the report list page (before opening the interactive
-  // viewer) fires both a file download and an incidental blank popup window. This runs
-  // against real Google Chrome (channel: 'chrome'), where closing the last open window
-  // quits the whole browser process — so the popup is deliberately left open rather than
-  // closed, to avoid killing the main page (and the in-flight download) if it happens to
-  // be the only other window at that moment.
+  // "Excel Download" also opens a blank popup. It is left open: in real Chrome, closing the
+  // last other window can quit the browser and kill the download.
   async downloadExcelDirect(): Promise<Download> {
     console.log('[STEP] Downloading report directly via Excel Download...');
     const downloadPromise = this.page.waitForEvent('download');
     await this.excelDownloadLink.click();
     const download = await downloadPromise;
 
-    // "Excel Download" is an ASP.NET postback on the main page (not a plain anchor), so
-    // the page is still re-rendering right after it fires. Clicking "View Report" too
-    // soon after races that re-render: the click lands but the postback never completes,
-    // so no popup ever opens and the caller hangs waiting for one indefinitely. Give the
-    // postback time to settle first, mirroring the same wait LoginPage uses after Sign In.
+    // "Excel Download" is a postback; clicking "View Report" before it settles gets lost and
+    // no report tab ever opens.
     await this.page.waitForTimeout(2000);
 
     return download;
   }
 
-  // Exports the grid from within an opened report viewer tab (as returned by viewReport()).
   async exportToExcel(reportPage: Page): Promise<Download> {
     console.log('[STEP] Exporting report to Excel from the report viewer...');
     const downloadPromise = reportPage.waitForEvent('download');
@@ -155,10 +131,8 @@ export class ReportViewerPage {
     autoDownloads.set(reportPage, reportPage.waitForEvent('download', { timeout: 60000 }).catch(() => null));
     await reportPage.bringToFront();
 
-    // The main window runs maximized (--start-maximized, needed for the app itself to render),
-    // and new windows opened from it inherit that maximized state. The report popup doesn't
-    // need to be maximized, so put it back to a normal, non-maximized size. Cosmetic only —
-    // skipped where there is no real window (headless CI) or no CDP (non-Chromium).
+    // The popup inherits the main window's maximized state; give it a normal size. Cosmetic,
+    // skipped where there is no window or no CDP.
     try {
       const session = await reportPage.context().newCDPSession(reportPage);
       const { windowId } = await session.send('Browser.getWindowForTarget');
@@ -181,8 +155,7 @@ export class ReportViewerPage {
     return (await this.getReportRows(reportPage)).length;
   }
 
-  // Playwright auto-dismisses unhandled dialogs, so the accept handler must be
-  // registered before triggering the alert or the popup never actually shows.
+  // Register the handler before the alert, or Playwright dismisses it unseen.
   async showRecordCountPopup(reportPage: Page, count: number) {
     const message = count === 0
       ? 'Warning: No Enquiry Found'
@@ -191,13 +164,8 @@ export class ReportViewerPage {
     await reportPage.evaluate((msg) => window.alert(msg), message);
   }
 
-  // Closing the report tab (e.g. after the 2nd Product-wise Sales Details
-  // view, once the date type has been switched and the report refreshed) can
-  // trigger a native browser dialog from the page's own unload handling. With
-  // no listener registered, Playwright auto-dismisses it, which leaves the
-  // close() call blocked waiting on a dialog that never gets accepted.
-  // Registering an accept handler first — and logging the dialog's message —
-  // lets the tab close cleanly and gives visibility into what triggered it.
+  // Closing a report tab can raise a dialog from the page's unload handler, and close()
+  // hangs unless it is accepted. Accept and log it.
   async closeReport(reportPage: Page, label: string) {
     reportPage.on('dialog', async (dialog) => {
       console.log(`[DEBUG] Dialog appeared while closing ${label} report viewer: type=${dialog.type()}, message="${dialog.message()}"`);
@@ -207,8 +175,7 @@ export class ReportViewerPage {
     await reportPage.close();
   }
 
-  // Looks up the column by its header text rather than a fixed index, since the
-  // selected report columns (and therefore their order) can change per run.
+  // By header text, since the selected columns and their order can change.
   async getDealerCodes(reportPage: Page): Promise<string[]> {
     const rows = await this.getReportRows(reportPage);
     if (rows.length === 0) return [];
@@ -219,10 +186,7 @@ export class ReportViewerPage {
     return rows.map((r) => (r[dealerCodeKey] ?? '').trim());
   }
 
-  // Keyed by header text (rather than a fixed column layout) so callers can pull
-  // whichever fields they need regardless of the report's configured column order.
-  // Comes from the on-screen grid, or from the Excel export when the report is over
-  // the viewer's display limit.
+  // Rows keyed by header text, from the on-screen grid or, over the display limit, the Excel export.
   async getReportRows(reportPage: Page): Promise<Record<string, string>[]> {
     let rows = rowCache.get(reportPage);
     if (!rows) {
@@ -241,9 +205,8 @@ export class ReportViewerPage {
     return this.readGridRows(reportPage);
   }
 
-  // Uses the automatic download if it fired; otherwise clicks the banner's "click here".
-  // The file is saved into DOWNLOAD_DIR and read from there; if Playwright never gets the
-  // download, the newest Excel saved since the report opened is used instead.
+  // Uses the automatic download if it fired, otherwise the banner's "click here". If Playwright
+  // never gets the download, falls back to the newest Excel saved since the report opened.
   private async readOverLimitExcel(reportPage: Page): Promise<Record<string, string>[]> {
     const openedAt = reportOpenedAt.get(reportPage) ?? Date.now() - 5 * 60 * 1000;
     let download = await Promise.race([
@@ -271,15 +234,14 @@ export class ReportViewerPage {
     }
     if (!filePath) {
       filePath = newestExcelSince(openedAt);
-      if (filePath) console.log('[WARN] The report download did not reach Playwright — using the newest Excel in the Downloads folder.');
+      if (filePath) console.log('[WARN] The report download did not reach Playwright; using the newest Excel in the Downloads folder.');
     }
     if (!filePath) {
       throw new Error(`Over-limit report Excel download did not produce a file (nothing new in ${DOWNLOAD_DIR} or ~/Downloads either).`);
     }
     console.log(`[STEP] Reading over-limit report from Excel: ${filePath}`);
 
-    // cellDates + dateNF keep dates in the grid's "DD-MM-YYYY hh:mm" shape, which the
-    // specs' date formatting expects.
+    // cellDates + dateNF keep dates in the grid's "DD-MM-YYYY hh:mm" format.
     const workbook = XLSX.readFile(filePath, { cellDates: true });
     const sheet = workbook.Sheets[workbook.SheetNames[0]!]!;
     const table = XLSX.utils.sheet_to_json<string[]>(sheet, {
@@ -288,10 +250,8 @@ export class ReportViewerPage {
       defval: '',
       dateNF: 'dd-mm-yyyy hh:mm',
     });
-    // The export may carry title rows above the column headers; the header row is the
-    // one with a Dealer Code column. Single-dealer reports (e.g. GSTR ProductWise Sales
-    // Details) have no Dealer Code column, so fall back to the first full-width row —
-    // title rows above the headers only fill one or two cells.
+    // The export can have title rows above the headers. The header row is the one with Dealer
+    // Code, or for single-dealer reports (GSTR) the first full-width row.
     const filled = (r: string[]) => r.filter((c) => String(c).trim() !== '').length;
     let headerIndex = table.findIndex((r) => r.some((c) => String(c).replace(/\s+/g, '').toLowerCase() === 'dealercode'));
     if (headerIndex === -1) {
@@ -315,9 +275,7 @@ export class ReportViewerPage {
       });
   }
 
-  // Reads the whole grid in one page.evaluate() round trip instead of issuing a
-  // separate Playwright call per row/cell — with ~1000 rows, per-row locator calls
-  // are slow enough to blow the test timeout.
+  // One evaluate() for the whole grid: per-row locator calls on ~1000 rows hit the test timeout.
   private async readGridRows(reportPage: Page): Promise<Record<string, string>[]> {
     return reportPage.evaluate(() => {
       const headers = Array.from(document.querySelectorAll('#GrdMain tr:first-child th')).map((th) =>

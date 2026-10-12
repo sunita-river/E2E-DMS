@@ -101,7 +101,6 @@ function addSummary(wb: ExcelJS.Workbook, book: PdiWorkbook) {
   ws.getCell('A2').font = { color: { argb: INK2 } };
   ws.getCell('A2').alignment = { indent: 1 };
 
-  // Headline figures.
   const count = (o: string) => book.rows.filter((r) => outcomeOf(r) === o).length;
   const done = book.dryRun ? count('dryrun') : count('updated');
   const tiles: [string, number, typeof TONES.good][] = [
@@ -111,7 +110,7 @@ function addSummary(wb: ExcelJS.Workbook, book: PdiWorkbook) {
     ['Errors', count('error') + book.failed.length, TONES.crit],
   ];
   tiles.forEach(([label, value, tone], i) => {
-    const col = [1, 2, 4, 5][i]!; // A, B, D, E — C is wide enough for its own label
+    const col = [1, 2, 4, 5][i]!; // A, B, D, E; C is skipped
     const v = ws.getCell(4, col);
     const l = ws.getCell(5, col);
     v.value = value;
@@ -161,8 +160,8 @@ function addSummary(wb: ExcelJS.Workbook, book: PdiWorkbook) {
   ws.getCell(n + 1, 1).font = { italic: true, size: 9, color: { argb: INK2 } };
 }
 
-// Tracking sheet (first in the master; Excel reserves the name "History"): "till now" KPIs, then one row per day since the history began,
-// newest first, with that day's counts and running totals. A data bar on Updated shows the trend.
+// Tracking sheet, first in the master (Excel reserves the name "History"): totals so far, then one row
+// per day, newest first, with that day's counts and running totals.
 function addHistory(wb: ExcelJS.Workbook, history: PdiHistory) {
   const now = history.latest!;
   const ws = wb.addWorksheet('Tracking', { views: [{ showGridLines: false, state: 'frozen', ySplit: 7 }] });
@@ -223,13 +222,13 @@ function addHistory(wb: ExcelJS.Workbook, history: PdiHistory) {
     });
   }
   const note = ws.getCell(9 + days.length, 1);
-  note.value = 'Columns F–H are running totals till that day. Each day\'s chassis are on the dated sheets (last 3 days).';
+  note.value = 'Columns F to H are running totals till that day. Each day\'s chassis are on the dated sheets (last 3 days).';
   note.font = { italic: true, size: 9, color: { argb: INK2 } };
 }
 
 // PDI master: one sheet per date (named yyyy-mm-dd, newest first), each holding that day's rows from
-// its PDI_Daily copy. If the file is locked (open in Excel) it is left as it is — the next run
-// rewrites it — rather than saved beside it, so there is only ever one master.
+// its PDI_Daily copy. If the file is locked (open in Excel) it is left for the next run to rewrite,
+// not saved beside it, so there is only ever one master.
 export async function writePdiMaster(filePath: string, days: { day: string; rows: ResultRow[] }[], history?: PdiHistory): Promise<boolean> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'E2E DMS automation';
@@ -239,7 +238,7 @@ export async function writePdiMaster(filePath: string, days: { day: string; rows
     await wb.xlsx.writeFile(filePath);
     return true;
   } catch (err) {
-    console.log(`[WARN] Could not update ${path.basename(filePath)} (${String((err as Error).message).slice(0, 80)}) — is it open in Excel? It will be updated on the next run.`);
+    console.log(`[WARN] Could not update ${path.basename(filePath)} (${String((err as Error).message).slice(0, 80)}). Is it open in Excel? It will be updated on the next run.`);
     return false;
   }
 }
@@ -257,7 +256,7 @@ export async function writePdiWorkbook(filePath: string, book: PdiWorkbook): Pro
     return filePath;
   } catch (err) {
     const fallback = filePath.replace(/\.xlsx$/i, `_${Date.now()}.xlsx`);
-    console.log(`[WARN] Could not write ${path.basename(filePath)} (${String((err as Error).message).slice(0, 80)}) — is it open in Excel? Saved as ${path.basename(fallback)} instead.`);
+    console.log(`[WARN] Could not write ${path.basename(filePath)} (${String((err as Error).message).slice(0, 80)}). Is it open in Excel? Saved as ${path.basename(fallback)} instead.`);
     await wb.xlsx.writeFile(fallback);
     return fallback;
   }

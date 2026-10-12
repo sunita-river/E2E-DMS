@@ -39,7 +39,7 @@ function writeWorkbook(workbook: XLSX.WorkBook, filePath: string): string {
     return filePath;
   } catch (err) {
     const fallback = filePath.replace(/\.xlsx$/, `_${Date.now()}.xlsx`);
-    console.log(`[WARN] Could not write ${path.basename(filePath)} (${String((err as Error).message).slice(0, 80)}) — is it open in Excel? Saved as ${path.basename(fallback)} instead.`);
+    console.log(`[WARN] Could not write ${path.basename(filePath)} (${String((err as Error).message).slice(0, 80)}); is it open in Excel? Saved as ${path.basename(fallback)} instead.`);
     XLSX.writeFile(workbook, fallback);
     return fallback;
   }
@@ -167,7 +167,6 @@ test.describe('MFR Vehicles Reports - Enquiry List and Product-wise Sales Detail
     await loginPage.login(credentials.dealervalidUser);
     await loginPage.verifyDashboard();
 
-    // --- Enquiry List ---
     const enquiryRows = await test.step('Enquiry List', async () => {
       await enquiryListReportPage.navigateToEnquiryList();
       await enquiryListReportPage.setFromDate(...pickerArgs(REPORT_FROM));
@@ -197,7 +196,7 @@ test.describe('MFR Vehicles Reports - Enquiry List and Product-wise Sales Detail
     ];
     expect.soft(enquiryProblems, `Enquiry List data problems:\n${enquiryProblems.join('\n')}`).toEqual([]);
 
-    // --- Product-wise Sales Details, Invoice date type (the report's default), same session ---
+    // Product-wise Sales Details, Invoice date type (the report's default), same session.
     const invoiceRows = await test.step('Product-wise Sales Details (Invoice)', async () => {
       await salesPage.navigateToProductWiseSalesDetails();
       await salesPage.setFromDate(...pickerArgs(REPORT_FROM));
@@ -210,8 +209,7 @@ test.describe('MFR Vehicles Reports - Enquiry List and Product-wise Sales Detail
       return rows;
     });
 
-    // --- Product-wise Sales Details, Booking date type ---
-    // The date type can't be switched in place: the main form has to be reopened from the dashboard
+    // Booking date type. The date type can't be switched in place: the main form has to be reopened from the dashboard
     // before the date type dropdown and View Report are usable again.
     const bookingRows = await test.step('Product-wise Sales Details (Booking)', async () => {
       await page.getByRole('banner').locator('a[href*="UserDashboard.aspx"]').first().click();
@@ -244,7 +242,6 @@ test.describe('MFR Vehicles Reports - Enquiry List and Product-wise Sales Detail
       expect.soft(problems, `${label} report data problems:\n${problems.join('\n')}`).toEqual([]);
     }
 
-    // --- Dealers, and the combined Enquiry / Invoice / Booking summary ---
     const sources: Source[] = [
       { label: 'Enquiry', rows: enquiryRows, dateField: ['Created Date'] },
       { label: 'Invoice', rows: invoiceRows, dateField: INVOICE_DATE, countBy: BOOKING_NO },

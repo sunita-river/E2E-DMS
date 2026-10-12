@@ -24,7 +24,6 @@ test.describe('Finance Dashboard - Product-wise Sales Details report', () => {
     await loginPage.loginAsRiverUser(credentials.riverUserValidUser);
     await loginPage.verifyDashboard();
 
-    // --- Product-wise Sales Details ---
     await salesDetailsReportPage.navigateToProductWiseSalesDetails();
     await salesDetailsReportPage.setFromDate('1', 'September', 2026);
     await salesDetailsReportPage.setToDate(todayDay);

@@ -35,11 +35,11 @@ const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
 const VIN_FILE = vinFilePath();
 const DRY_RUN = process.env.PDI_DRY_RUN === '1';
 const EDIT_REASON = 'Details updated';
-const PDI_PARALLEL = Number(process.env.PDI_PARALLEL || 3); // dealers processed at once, each in its own browser window
+const PDI_PARALLEL = Number(process.env.PDI_PARALLEL || 3);
 if (!Number.isInteger(PDI_PARALLEL) || PDI_PARALLEL < 1) throw new Error(`PDI_PARALLEL must be a whole number above 0 (got "${process.env.PDI_PARALLEL}")`);
-const SHOW_WAIT_MS = Number(process.env.PDI_SHOW_WAIT_S || 30) * 1000; // wait after clicking Show on the PDI Due List
-const PDI_REFRESHES =Number(process.env.PDI_REFRESHES || 2); // extra Show clicks when the PDI Due List says "Displaying : 0"
-const LOAD_TIMEOUT =Number(process.env.PDI_LOAD_TIMEOUT_S || 30) * 1000; // longest wait for Show / Save to reload the page
+const SHOW_WAIT_MS = Number(process.env.PDI_SHOW_WAIT_S || 30) * 1000;
+const PDI_REFRESHES =Number(process.env.PDI_REFRESHES || 2);
+const LOAD_TIMEOUT =Number(process.env.PDI_LOAD_TIMEOUT_S || 30) * 1000;
 const SETTLE_MS = 1000;
 
 // Correction run (PDI_FIX_FILE): dealer code -> chassis numbers to re-save. Lines that aren't
@@ -100,11 +100,11 @@ function pickDealers(): UserCredentials[] {
   const seen = new Set<string>();
   dealers = dealers.filter((d) => {
     const code = String(d.dealercode).toLowerCase();
-    if (seen.has(code)) { console.log(`[WARN] Dealer ${d.dealercode} is listed more than once — running it once.`); return false; }
+    if (seen.has(code)) { console.log(`[WARN] Dealer ${d.dealercode} is listed more than once, running it once.`); return false; }
     seen.add(code);
     return true;
   });
-  if (!dealers.length) throw new Error(`No PIDDealerCodes or PIDUsers in ${path.basename(CREDENTIALS_FILE)} — add some or set PDI_DEALER.`);
+  if (!dealers.length) throw new Error(`No PIDDealerCodes or PIDUsers in ${path.basename(CREDENTIALS_FILE)}. Add some or set PDI_DEALER.`);
   const incomplete = dealers.filter((d) => !d.username || !d.password || /^<.*>$/.test(String(d.username)) || /^<.*>$/.test(String(d.password)));
   if (incomplete.length) {
     throw new Error(`Username/password missing or still <user>/<password> in ${path.basename(CREDENTIALS_FILE)} for: ${incomplete.map((d) => d.dealercode).join(', ')}`);
@@ -125,7 +125,7 @@ const VIN_FIELDS: { field: string; key: keyof VinDetails; label: string }[] = [
 // or are empty; those must never be typed into the DMS.
 const isSerial = (v: string) => !!v && !/\s/.test(v) && /\d/.test(v);
 
-// VIN Details sheet columns, found by their header text in row 1 — never by position: on 1-Oct-2026 the
+// VIN Details sheet columns are found by their header text in row 1, never by position. On 1-Oct-2026 the
 // sheet's Battery and Motor columns were swapped and 41 chassis got Engine No and Battery the wrong way round.
 const VIN_COLUMNS: { key: keyof VinDetails | 'vin'; header: RegExp; label: string }[] = [
   { key: 'vin', header: /^(vin|chassis)/, label: 'VIN' },
@@ -135,7 +135,7 @@ const VIN_COLUMNS: { key: keyof VinDetails | 'vin'; header: RegExp; label: strin
 ];
 
 function loadVinDetails(): Map<string, VinDetails> {
-  if (!fs.existsSync(VIN_FILE)) throw new Error(`VIN Details workbook not found: ${VIN_FILE} — put a "VIN….xlsx" in resources/ or set PDI_VIN_FILE.`);
+  if (!fs.existsSync(VIN_FILE)) throw new Error(`VIN Details workbook not found: ${VIN_FILE}. Put a "VIN*.xlsx" in resources/ or set PDI_VIN_FILE.`);
   const workbook = XLSX.readFile(VIN_FILE);
   const sheet = workbook.Sheets[workbook.SheetNames[0]!]!;
   const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: '' });
@@ -200,11 +200,11 @@ function checkColumnProfile(byVin: Map<string, VinDetails>) {
         mixedUp.push(`the "${label(k)}" column now holds values like last run's "${label(other)}" column`);
       } else if (own < 0.2) {
         console.log(`[WARN] VIN sheet: the "${label(k)}" column's values start differently from last run ` +
-          `(now ${Object.keys(now[k]).slice(0, 3).join(', ')}…) — a new format? Carrying on.`);
+          `(now ${Object.keys(now[k]).slice(0, 3).join(', ')}...). New format? Carrying on.`);
       }
     }
     if (mixedUp.length) {
-      throw new Error(`VIN Details sheet (${path.basename(VIN_FILE)}): ${mixedUp.join('; ')} — the columns look swapped. ` +
+      throw new Error(`VIN Details sheet (${path.basename(VIN_FILE)}): ${mixedUp.join('; ')}. The columns look swapped. ` +
         'Nothing was typed into the DMS. Fix the sheet and run again, or if it is right, run once with PDI_ACCEPT_VIN_COLUMNS=1.');
     }
   }
@@ -242,10 +242,9 @@ async function readBlankPdiRows(page: Page): Promise<BlankRow[]> {
   return blank;
 }
 
-// All dealers' rows go into one formatted workbook: Output/PDI runs/PDI_BlankChassis_<date-time>.xlsx
-// (Summary, one row per chassis, and a "Dealers" sheet listing every dealer checked, including ones with
-// no blank rows, so the day's merge (tests/utils/pdiDaily.ts) can show them and spot earlier errors that
-// a later run cleared).
+// One workbook for all dealers: Output/PDI runs/PDI_BlankChassis_<date-time>.xlsx. The "Dealers" sheet
+// lists every dealer checked, even with no blank rows, so the day's merge (pdiDaily.ts) can clear
+// earlier errors that a later run fixed.
 async function saveResults(results: ResultRow[], dealersChecked: ResultRow[], dealers: string[], failures: FailedDealer[]): Promise<string> {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
   fs.mkdirSync(RUNS_DIR, { recursive: true });
@@ -262,7 +261,7 @@ async function resetSession(page: Page, username: string, log: Log) {
     await page.locator(`a:has-text("${username}")`).click({ timeout: 10000 });
     await page.getByRole('link', { name: /Sign out/i }).click({ timeout: 10000 });
   } catch {
-    log('[STEP] Logout link not available — clearing the session instead.');
+    log('[STEP] Logout link not available, clearing the session instead.');
   }
   await page.context().clearCookies().catch(() => {});
 }
@@ -274,11 +273,11 @@ async function findBlankPdiRows(page: Page, log: Log): Promise<BlankRow[]> {
   await page.getByRole('link', { name: /^\W*WORKSHOP\W*$/ }).click();
   await page.locator('a[href$="PDIStockCheckingMain.aspx"]').first().click();
   await page.waitForURL(new RegExp(PDI_URL.replace('.', '\\.'), 'i'), { timeout: 60000 })
-    .catch(() => page.goto(PDI_URL)); // menu hidden/collapsed for some users — go direct
+    .catch(() => page.goto(PDI_URL)); // menu hidden/collapsed for some users, so go direct
   const chassisCells = page.locator("input[id^='ctl00_cpMain_grdMain_'][id$='_ChassisNo']");
 
   // "Displaying : N" is the PDI Due List's own count; it appears once the list has loaded. A count of 0,
-  // or no count yet, can mean the records haven't come through, so click Show (the page's refresh —
+  // or no count yet, can mean the records haven't come through, so click Show (the page's refresh;
   // Top is left at its default) and read it again, up to PDI_REFRESHES times, before trusting it.
   const displayedCount = async (timeout: number) => {
     const text = await page.getByText(/Displaying\s*:\s*\d+/i).first().textContent({ timeout }).catch(() => null);
@@ -289,17 +288,16 @@ async function findBlankPdiRows(page: Page, log: Log): Promise<BlankRow[]> {
     // Tag the current page so the old list isn't mistaken for the refreshed one.
     await page.locator("#ctl00_cpMain_Topn, input[id^='ctl00_cpMain_grdMain_']")
       .evaluateAll((els) => els.forEach((e) => e.setAttribute('data-pw-stale', '1'))).catch(() => {});
-    // Click the Show button's label (never press Enter in Top), then give the list a fixed
-    // SHOW_WAIT_MS to load.
+    // Click the Show button's label; pressing Enter in Top posts the form without a command.
     await page.locator('#ctl00_cpMain_cmdShow > span').click();
     await page.waitForTimeout(SHOW_WAIT_MS);
     await page.waitForLoadState('load').catch(() => {});
     const reloaded = await page.locator('#ctl00_cpMain_Topn:not([data-pw-stale])').count().catch(() => 0);
-    if (!reloaded) log(`[WARN] PDI Due List had not reloaded ${SHOW_WAIT_MS / 1000}s after Show — reading what is on screen.`);
+    if (!reloaded) log(`[WARN] PDI Due List had not reloaded ${SHOW_WAIT_MS / 1000}s after Show, reading what is on screen.`);
   };
   let displayed = await displayedCount(60000);
   for (let i = 1; i <= PDI_REFRESHES && !displayed; i++) {
-    log(`[STEP] PDI Due List shows ${displayed === null ? 'no "Displaying" count' : '"Displaying : 0"'} — refreshing to fetch the records (${i} of ${PDI_REFRESHES})...`);
+    log(`[STEP] PDI Due List shows ${displayed === null ? 'no "Displaying" count' : '"Displaying : 0"'}, refreshing to fetch the records (${i} of ${PDI_REFRESHES})...`);
     await refreshList();
     displayed = await displayedCount(30000);
   }
@@ -308,17 +306,16 @@ async function findBlankPdiRows(page: Page, log: Log): Promise<BlankRow[]> {
   // The list shows 25 vehicles by default. When "Displaying" is higher, put that exact count in Top
   // (never a fixed 500) and Show again so every vehicle is checked; otherwise Top is left alone.
   if (displayed && displayed > (await chassisCells.count())) {
-    log(`[STEP] PDI Due List says Displaying : ${displayed} — setting Top to ${displayed} and showing all of them...`);
+    log(`[STEP] PDI Due List says Displaying : ${displayed}, setting Top to ${displayed} and showing all of them...`);
     await page.locator('#ctl00_cpMain_Topn').fill(String(displayed));
     await refreshList();
     await chassisCells.first().waitFor({ timeout: 30000 }).catch(() => {});
     displayed = (await displayedCount(30000)) ?? displayed;
   }
 
-  // The old fixed "Top = PDI_TOP (500)" step below is switched off; Top is now set to the exact
-  // "Displaying" count above, and only when that count is more than the rows shown.
+  // Old fixed "Top = 500" step, kept for reference. Top is now set from the "Displaying" count above.
   // // The page lists only the top 25 vehicles by default; raise "Top" and click Show so every
-  // // vehicle waiting for PDI is checked. (Show is the page's own refresh; press no Enter here —
+  // // vehicle waiting for PDI is checked. (Show is the page's own refresh; press no Enter here,
   // // it posts the form without a command and empties the grid.)
   // await page.locator('#ctl00_cpMain_Topn').fill(String(PDI_TOP));
   // // Tag the current page so the Top-25 grid still on screen isn't mistaken for the reloaded one
@@ -332,14 +329,14 @@ async function findBlankPdiRows(page: Page, log: Log): Promise<BlankRow[]> {
   //   const cells = [...document.querySelectorAll("input[id^='ctl00_cpMain_grdMain_'][id$='_ChassisNo']")];
   //   return (!!top && !top.hasAttribute('data-pw-stale')) || (cells.length > 0 && cells.every((c) => !c.hasAttribute('data-pw-stale')));
   // }, undefined, { timeout: 90000 }).then(() => true, () => false);
-  // if (!reloaded) log('[WARN] PDI page did not reload within 90s after Show — reading what is on screen.');
+  // if (!reloaded) log('[WARN] PDI page did not reload within 90s after Show, reading what is on screen.');
   // await page.waitForLoadState('load').catch(() => {});
   // await chassisCells.first().waitFor({ timeout: 60000 }).catch(() => log('[STEP] PDI grid is empty.'));
   const gridRows = await chassisCells.count();
-  log(`[STEP] PDI Due List: Displaying : ${displayed ?? '?'} · ${gridRows} vehicle(s) in the grid`);
-  if (displayed === null) log('[WARN] No "Displaying" count on the PDI Due List page — reading what is on screen.');
-  else if (gridRows < displayed) log(`[WARN] Page says Displaying : ${displayed} but only ${gridRows} rows are in the grid — some vehicles may not be checked.`);
-  if (displayed === null && gridRows >= 25) log('[WARN] The grid is full at 25 and the page shows no "Displaying" count — there may be more vehicles that were not checked.');
+  log(`[STEP] PDI Due List: Displaying : ${displayed ?? '?'}, ${gridRows} vehicle(s) in the grid`);
+  if (displayed === null) log('[WARN] No "Displaying" count on the PDI Due List page, reading what is on screen.');
+  else if (gridRows < displayed) log(`[WARN] Page says Displaying : ${displayed} but only ${gridRows} rows are in the grid; some vehicles may not be checked.`);
+  if (displayed === null && gridRows >= 25) log('[WARN] The grid is full at 25 and the page shows no "Displaying" count; there may be more vehicles that were not checked.');
 
   return readBlankPdiRows(page);
 }
@@ -371,7 +368,6 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
     return results;
   }
 
-  // SETTINGS -> Admin -> Modify vehicle details
   log('[STEP] Opening SETTINGS -> Admin -> Modify vehicle details...');
   await page.getByRole('link', { name: /^\W*SETTINGS\W*$/ }).click();
   await page.getByRole('link', { name: /^\W*Admin\W*$/ }).first().click();
@@ -383,10 +379,9 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
   const onDialog = async (d: Dialog) => { lastDialog = d.message(); await d.accept().catch(() => {}); };
   page.on('dialog', onDialog);
 
-  // Show and Save post the page back. Instead of a fixed wait, tag the current Chassis No field, then
-  // wait until a fresh one (untagged) is on the page — holding `chassis`, when given — so a vehicle
-  // already on screen doesn't count as reloaded. Gives up after PDI_LOAD_TIMEOUT_S and carries on;
-  // the caller's checks catch a vehicle that didn't load.
+  // Show and Save post the page back. Tag the current Chassis No field and wait for an untagged one
+  // (holding `chassis`, if given), so a vehicle already on screen doesn't count as reloaded. On timeout
+  // carry on; the caller's checks catch a vehicle that didn't load.
   const chassisField = '[name="ctl00$cpMain$ChassisNo"]';
   const postBack = async (button: string, chassis?: string) => {
     await page.locator(chassisField).evaluateAll((els) => els.forEach((e) => e.setAttribute('data-pw-stale', '1'))).catch(() => {});
@@ -395,9 +390,9 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
       const el = document.querySelector(sel) as HTMLInputElement | null;
       return !!el && !el.hasAttribute('data-pw-stale') && (!want || el.value.trim().toUpperCase() === want);
     }, { sel: chassisField, want: chassis?.toUpperCase() }, { timeout: LOAD_TIMEOUT }).then(() => true, () => false);
-    if (!reloaded) log(`[WARN] Page did not reload within ${LOAD_TIMEOUT / 1000}s after ${button}${chassis ? ` for ${chassis}` : ''} — continuing.`);
+    if (!reloaded) log(`[WARN] Page did not reload within ${LOAD_TIMEOUT / 1000}s after ${button}${chassis ? ` for ${chassis}` : ''}, continuing.`);
     await page.waitForLoadState('load').catch(() => {});
-    await page.waitForTimeout(SETTLE_MS); // any alert() raised on load
+    await page.waitForTimeout(SETTLE_MS); // let any alert() raised on load fire
   };
   const showVehicle = async (chassis: string) => {
     await page.locator('[name="ctl00$cpMain$IdentifierValue"]').fill(chassis);
@@ -406,13 +401,12 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
   const fieldValue = async (name: string) => (await page.locator(`[name="ctl00$cpMain$${name}"]`).inputValue()).trim();
   const identifierInput = page.locator('[name="ctl00$cpMain$IdentifierValue"]');
 
-  // After an error, get back to a usable Modify vehicle details page. The DMS sometimes drops the
-  // session mid-dealer (a click times out, then every later field is missing), so reloading the page
-  // alone isn't enough — log in again when the form doesn't come back.
+  // The DMS sometimes drops the session mid-dealer (a click times out, then every later field is
+  // missing), so if reloading Modify vehicle details doesn't bring the form back, log in again.
   const recover = async () => {
     await page.goto(MODIFY_VEHICLE_URL).catch(() => {});
     if (await identifierInput.isVisible({ timeout: 15000 }).catch(() => false)) return;
-    log('[STEP] Modify vehicle details not available (session lost?) — logging in again...');
+    log('[STEP] Modify vehicle details not available (session lost?), logging in again...');
     await loginPage.goto();
     await loginPage.login(dealer);
     await loginPage.verifyDashboard();
@@ -431,12 +425,11 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
     // A correction run keeps what the DMS held before, so the report shows what was overwritten.
     if (fixChassis) {
       const before = await Promise.all(VIN_FIELDS.map(async (f) => `${f.label} ${(await fieldValue(f.field)) || '(empty)'}`));
-      row.BlankFields = `Correction — before: ${before.join(', ')}`;
+      row.BlankFields = `Correction, before: ${before.join(', ')}`;
     }
 
-    // Only real serial numbers are typed in. A VIN-sheet note ("CHARGER NOT ASSIGNED YET", "CONTACT
-    // FACTORY TEAM", …) leaves that DMS field as it is, and is reported when the field is still empty —
-    // or, in a correction run, always (the value left there may be the wrong one being corrected).
+    // Only real serials are typed in. A VIN-sheet note leaves the DMS field as it is; it is reported when
+    // the field is still empty, or always in a correction run (the value left there may be the wrong one).
     const filled: [field: string, value: string][] = [];
     const notes: string[] = [];
     for (const f of VIN_FIELDS) {
@@ -450,15 +443,15 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
       }
     }
     const noteText = notes.length ? `VIN sheet has no usable ${notes.join(', ')}` : '';
-    if (!filled.length) return `${noteText || 'VIN sheet has no usable values'} — nothing saved`;
+    if (!filled.length) return `${noteText || 'VIN sheet has no usable values'}, nothing saved`;
     await page.locator('[name="ctl00$cpMain$EditChassisReason"]').fill(EDIT_REASON);
-    if (DRY_RUN) return noteText ? `${noteText} — the rest filled (dry run)` : 'Dry run — filled, not saved';
+    if (DRY_RUN) return noteText ? `${noteText}; the rest filled (dry run)` : 'Dry run: filled, not saved';
 
     lastDialog = '';
     await postBack('#ctl00_cpMain_cmdSave');
     const saveMessage = lastDialog;
 
-    // Re-open the vehicle to confirm the DMS actually kept the new values; name any it didn't.
+    // Re-open the vehicle to check the DMS actually kept the new values.
     await showVehicle(chassis);
     const notKept: string[] = [];
     for (const [field, value] of filled) {
@@ -466,8 +459,8 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
       if (now !== value) notKept.push(`${VIN_FIELDS.find((f) => f.field === field)!.label}: DMS has "${now}"`);
     }
     const suffix = saveMessage ? ` (${saveMessage})` : '';
-    if (notKept.length) return `Save clicked but values not kept — ${notKept.join('; ')}${suffix}`;
-    return noteText ? `${noteText} — the rest saved${suffix}` : `Updated${suffix}`;
+    if (notKept.length) return `Save clicked but values not kept: ${notKept.join('; ')}${suffix}`;
+    return noteText ? `${noteText}; the rest saved${suffix}` : `Updated${suffix}`;
   };
 
   try {
@@ -476,10 +469,9 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
       const details = vinDetails.get(chassis.toUpperCase());
       if (!details) {
         row.Status = 'Not in VIN Details sheet';
-        log(`[WARN] ${chassis}: not found in VIN Details — skipped.`);
+        log(`[WARN] ${chassis}: not found in VIN Details, skipped.`);
         continue;
       }
-      // Record only the values actually used (notes aren't typed in).
       row.EngineNo = isSerial(details.motor) ? details.motor : '';
       row.BatteryDetails = isSerial(details.battery) ? details.battery : '';
       row.VehicleChargerNo = isSerial(details.charger) ? details.charger : '';
@@ -490,12 +482,12 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
           row.Status = await updateChassis(row, details);
           const ok = /^(Updated|Dry run)/.test(row.Status);
           log(ok
-            ? `[OK] ${chassis}: Engine ${details.motor}, Battery ${details.battery}, Charger ${details.charger} — ${row.Status}${attempt > 1 ? ' (on retry)' : ''}`
+            ? `[OK] ${chassis}: Engine ${details.motor}, Battery ${details.battery}, Charger ${details.charger}: ${row.Status}${attempt > 1 ? ' (on retry)' : ''}`
             : `[WARN] ${chassis}: ${row.Status}`);
           break;
         } catch (err) {
           row.Status = `Error: ${String((err as Error).message).split('\n')[0]!.slice(0, 150)}`;
-          log(`[WARN] ${chassis}: ${row.Status}${attempt === 1 ? ' — recovering and retrying once' : ' — giving up on this chassis'}`);
+          log(`[WARN] ${chassis}: ${row.Status}${attempt === 1 ? ', recovering and retrying once' : ', giving up on this chassis'}`);
           try {
             await recover();
           } catch (recoverErr) {
@@ -529,9 +521,9 @@ test.describe('PDI', () => {
     const dealers = pickDealers();
     const vinDetails = loadVinDetails();
     const lanes = Math.min(PDI_PARALLEL, dealers.length);
-    console.log(`[STEP] ${dealers.length} dealer(s), ${lanes} at a time: ${dealers.map((d) => d.dealercode).join(', ')}; ${vinDetails.size} VINs loaded from ${path.basename(VIN_FILE)}${DRY_RUN ? ' (DRY RUN — no Save)' : ''}${FIX_FILE ? ` — CORRECTION RUN from ${path.basename(FIX_FILE)}` : ''}`);
+    console.log(`[STEP] ${dealers.length} dealer(s), ${lanes} at a time: ${dealers.map((d) => d.dealercode).join(', ')}; ${vinDetails.size} VINs loaded from ${path.basename(VIN_FILE)}${DRY_RUN ? ' (DRY RUN, no Save)' : ''}${FIX_FILE ? `, CORRECTION RUN from ${path.basename(FIX_FILE)}` : ''}`);
 
-    // ~25 blank rows x ~25s each per dealer, with headroom.
+    // About 25 blank rows x 25s each per dealer, with headroom.
     test.setTimeout(Math.ceil(dealers.length / lanes) * 20 * 60 * 1000);
 
     const startedAt = new Date();
@@ -587,15 +579,14 @@ test.describe('PDI', () => {
     const clean: string[] = [];
     for (const code of order) {
       if (failedDealers.includes(code)) {
-        console.log(`\n[RESULT] Dealer ${code}: FAILED before finishing — see the error above.`);
+        console.log(`\n[RESULT] Dealer ${code}: FAILED before finishing, see the error above.`);
         continue;
       }
       const mine = results.filter((r) => r.Dealer === code);
       if (!mine.length) { clean.push(code); continue; }
-      // In a dry run "done" means filled (nothing is saved).
       const done = (r: ResultRow) => r.Status!.startsWith(DRY_RUN ? 'Dry run' : 'Updated');
       const updated = mine.filter(done);
-      console.log(`\n[RESULT] Dealer ${code}: ${updated.length} of ${mine.length} chassis ${DRY_RUN ? 'filled (dry run — nothing saved)' : 'updated'}`);
+      console.log(`\n[RESULT] Dealer ${code}: ${updated.length} of ${mine.length} chassis ${DRY_RUN ? 'filled (dry run, nothing saved)' : 'updated'}`);
       updated.forEach((r) => console.log(`   ${r.ChassisNo}  Engine ${r.EngineNo}, Battery ${r.BatteryDetails}, Charger ${r.VehicleChargerNo}`));
       const notUpdated = mine.filter((r) => !done(r));
       if (notUpdated.length) {
@@ -616,15 +607,14 @@ test.describe('PDI', () => {
       } catch (err) {
         console.log(`[WARN] Day's PDI copy not refreshed: ${(err as Error).message}`);
       }
-      console.log('[STEP] No email sent — run npm run report:pdi-daily after the day\'s last PDI run to email the day\'s report once.');
+      console.log('[STEP] No email sent. Run npm run report:pdi-daily after the day\'s last PDI run to email the day\'s report once.');
     }
 
-    // A chassis with no data in the VIN Details sheet is a data gap, not a test failure: report it
-    // plainly (the daily report lists it too). Fail (red) only for real errors.
+    // A chassis missing from the VIN Details sheet is a data gap, not a test failure; only real errors fail.
     const noData = results.filter((r) => outcomeOf(r) === 'missing');
     if (noData.length) {
       const dealersMissing = [...new Set(noData.map((r) => r.Dealer!))];
-      console.log(`\n[RESULT] No data found in the VIN Details sheet (${path.basename(VIN_FILE)}) for ${noData.length} chassis — not updated. ` +
+      console.log(`\n[RESULT] No data found in the VIN Details sheet (${path.basename(VIN_FILE)}) for ${noData.length} chassis, not updated. ` +
         `Add these VINs to the sheet, then rerun with PDI_DEALER=${dealersMissing.join(',')}`);
       noData.forEach((r) => console.log(`   ${r.Dealer} ${r.ChassisNo}: ${r.Status}`));
     }

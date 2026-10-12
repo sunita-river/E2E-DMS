@@ -93,7 +93,7 @@ async function loginToStage(page: Page) {
   await loginPage.goto(STAGE_URL);
   await loginPage.loginAsRiverUser(stageUser);
   // LoginPage.verifyDashboard() also expects a "Sales/Service Dashboard" link, which the stage
-  // River User dashboard doesn't have — check for the dashboard page, the user menu and the main menu instead.
+  // River User dashboard doesn't have, so check for the dashboard page, the user menu and the main menu instead.
   await expect(page, 'Login failed: still on the login page (check stageUser in credentials.json).')
     .toHaveURL(/userdashboard\.aspx/i, { timeout: 30000 });
   await expect(page.getByRole('link', { name: stageUser.username }).first()).toBeVisible();
@@ -129,7 +129,7 @@ async function pickAutosuggest(page: Page, fieldId: string, text: string, label:
   // pressSequentially, not fill(): the lookup only runs on keyup. An empty search text still needs one
   // keystroke, so type a space and let the field's own filter (model / product) narrow the list.
   await field.pressSequentially(text || ' ', { delay: 150 });
-  await expect(suggestions.locator('tr, li').first(), `No ${label} suggestions for "${text}" — does this user have a dealer/branch with ${label}s set up?`)
+  await expect(suggestions.locator('tr, li').first(), `No ${label} suggestions for "${text}"; does this user have a dealer/branch with ${label}s set up?`)
     .toBeVisible({ timeout: 15000 });
   await field.press('ArrowDown');
   await field.press('Enter');
@@ -221,7 +221,7 @@ test.describe('Stage DMS - Automation for Testing', () => {
     page = await context.newPage();
   });
   test.beforeEach(() => { alerts.length = 0; });
-  // The shared page isn't Playwright's own fixture, so its screenshot-on-failure doesn't cover it — attach one here.
+  // The shared page isn't Playwright's own fixture, so its screenshot-on-failure doesn't cover it; attach one here.
   test.afterEach(async ({}, testInfo) => {
     if (testInfo.status === testInfo.expectedStatus) return;
     for (const [i, p] of context.pages().entries()) {
@@ -244,7 +244,7 @@ test.describe('Stage DMS - Automation for Testing', () => {
     expect(alerts, 'Alerts during login').toEqual([]);
 
     done.login = true;
-    console.log('✅ Logged in to stage DMS');
+    console.log('[DONE] Logged in to stage DMS');
   });
 
   // Scenario 2
@@ -305,7 +305,7 @@ test.describe('Stage DMS - Automation for Testing', () => {
     await expect(row).toContainText(ENQUIRY.status);
 
     done.enquiry = true;
-    console.log(`✅ Enquiry created for ${ENQUIRY.name} (${ENQUIRY.phone})`);
+    console.log(`[DONE] Enquiry created for ${ENQUIRY.name} (${ENQUIRY.phone})`);
   });
 
   // Scenario 3
@@ -408,7 +408,7 @@ test.describe('Stage DMS - Automation for Testing', () => {
     await expect(updatedRow).not.toContainText(ddmmyyyySlash(tomorrow));
 
     done.followUp = true;
-    console.log(`✅ Follow-up added to ${ENQUIRY.name}: next call ${ddmmyyyySlash(FOLLOW_UP.nextCallDate)} ${FOLLOW_UP.nextCallTime}`);
+    console.log(`[DONE] Follow-up added to ${ENQUIRY.name}: next call ${ddmmyyyySlash(FOLLOW_UP.nextCallDate)} ${FOLLOW_UP.nextCallTime}`);
   });
 
   // Scenario 4
@@ -429,7 +429,7 @@ test.describe('Stage DMS - Automation for Testing', () => {
     await expect(bookingButton).toHaveText('Booking');
 
     console.log('[STEP] Clicking Booking...');
-    // Opens Product/ProductSaleBooking.aspx in a new tab — unless the dealer requires a quotation first,
+    // Opens Product/ProductSaleBooking.aspx in a new tab, unless the dealer requires a quotation first,
     // in which case it only shows an alert.
     // The filter side panel overlaps the right-hand row buttons after Apply Filter (and its Hide link
     // doesn't close it under automation), so fire the button's click event instead of a mouse click.
@@ -508,7 +508,7 @@ test.describe('Stage DMS - Automation for Testing', () => {
     const after = await searchMyEnquiries(page, ENQUIRY.phone);
     await expect(after).toContainText('Displaying 0 records');
     await expect(after).not.toContainText(ENQUIRY.name);
-    console.log(`✅ Booking ${bookingNo} created for ${ENQUIRY.name}: ${product}, total ₹${total}`);
+    console.log(`[DONE] Booking ${bookingNo} created for ${ENQUIRY.name}: ${product}, total ₹${total}`);
   });
 
   // Scenario 5
@@ -603,7 +603,7 @@ test.describe('Stage DMS - Automation for Testing', () => {
     expect(await amountOf(f('TotalPayable'), 'Product Total'), 'Product Total unchanged').toBe(total);
     await expect(f('PaidAmount')).toHaveValue(RECEIPT.amount.toFixed(2));
     await expect(f('BalanceAmount')).toHaveValue((total - RECEIPT.amount).toFixed(2));
-    console.log(`✅ Receipt ${receiptNo} for ₹${RECEIPT.amount} saved against booking ${bookingNo}; balance ₹${(total - RECEIPT.amount).toFixed(2)}`);
+    console.log(`[DONE] Receipt ${receiptNo} for ₹${RECEIPT.amount} saved against booking ${bookingNo}; balance ₹${(total - RECEIPT.amount).toFixed(2)}`);
   });
 
   // Scenario 6: clean-up, so each run doesn't leave a paid booking behind on stage. The stage River User

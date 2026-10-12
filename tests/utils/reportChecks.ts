@@ -20,7 +20,7 @@ const toNumber = (value: string) => Number(String(value).replace(/,/g, '').trim(
 function summarize(label: string, badRows: number[], detail: (i: number) => string): string[] {
   if (!badRows.length) return [];
   const sample = badRows.slice(0, 5).map((i) => `row ${i + 1}: ${detail(i)}`).join('; ');
-  return [`${label}: ${badRows.length} row(s) — ${sample}${badRows.length > 5 ? '; …' : ''}`];
+  return [`${label}: ${badRows.length} row(s): ${sample}${badRows.length > 5 ? '; ...' : ''}`];
 }
 
 export function missingColumns(rows: Row[], required: string[]): string[] {
@@ -44,7 +44,7 @@ export function datesOutsideRange(rows: Row[], column: string, from: Date, to: D
     const d = parseReportDate(r[column] ?? '');
     return d && d >= from && d < end ? [] : [i];
   });
-  return summarize(`${column} missing or outside ${from.toDateString()} – ${to.toDateString()}`, bad, (i) => `"${rows[i]![column]}"`);
+  return summarize(`${column} missing or outside ${from.toDateString()} to ${to.toDateString()}`, bad, (i) => `"${rows[i]![column]}"`);
 }
 
 export function nonNumeric(rows: Row[], columns: string[]): string[] {
@@ -61,5 +61,5 @@ export function gstrTotalsMismatch(rows: Row[]): string[] {
     const sum = parts.reduce((s, c) => s + toNumber(r[c] ?? '0'), 0);
     return Math.abs(sum - toNumber(r.TotalAmount ?? '')) > 1 ? [i] : [];
   });
-  return summarize('TotalAmount ≠ Taxable + taxes', bad, (i) => `${rows[i]!.InvoiceNo}: total ${rows[i]!.TotalAmount}`);
+  return summarize('TotalAmount does not equal Taxable + taxes', bad, (i) => `${rows[i]!.InvoiceNo}: total ${rows[i]!.TotalAmount}`);
 }

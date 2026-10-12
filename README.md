@@ -5,9 +5,10 @@ End-to-end Playwright automation for **River DMS** (`rivermobility.gaindms.com`)
 | Script | What it does | Output |
 |---|---|---|
 | `tests/enquiryListReport.spec.ts` | Dealer login → Enquiry List (full list, every row), then **Product-wise Sales Details** by Invoice date and by Booking date in the same session. Checks each report's columns, blanks and dates, counts dealers, and builds an Enquiry / Invoice / Booking summary by date and dealer (bookings counted once by Booking No) whose totals must match the reports | `Output/Enquiry_List_<from>_<to>.xlsx`, `Output/Enquiry_Summary_<from>_<to>.xlsx` (By Date, By Dealer, By Date and Dealer); the per-day table is pasted into the run email |
-| `tests/GSTR Report.spec.ts` | For every dealer in `credentials.json`: GSTR ProductWise Sales Details, plus the **Post GST Discount** read from each Product Sale invoice PDF | `Output/<dealer>_SalesGSTNReport_<from>_<to>.xlsx` and `MasterData_…xlsx` |
+| `tests/GSTR Report.spec.ts` | For every dealer in `credentials.json`: GSTR ProductWise Sales Details, plus the **Post GST Discount** read from each Product Sale invoice PDF | `Output/<dealer>_SalesGSTNReport_<from>_<to>.xlsx` and `MasterData_…xlsx`; anything not found in DMS (report gone from the menu, missing columns, bookings not invoiced, discounts not read, dealers not run) goes to `Output/GSTR_Missing_<from>_<to>.xlsx` (highlighted red) and a red "not found in DMS" section in the run email |
 | `tests/PDI.spec.ts` | For every PDI dealer (`PIDDealerCodes` / `PIDUsers`): finds **WORKSHOP → PDI** rows with a blank field and fills Engine / Battery / Charger from the VIN Details sheet in **Settings → Admin → Modify vehicle details** | one copy per day, `Output/PDI_Daily_<date>.xlsx` + dashboard, refreshed by every run (each run's own file goes to `Output/PDI runs/`); no email per run |
 | `tests/Automation for Testing.spec.ts` | **Stage DMS only** (`credentials.stageUser`): River User login → create enquiry → follow-up → booking → ₹5,000 receipt, checking each step's fields and saved records. Each run leaves new records on stage | Playwright report only |
+| `scripts/asmwise_report.py` | River User login → Enquiry List and Booking Master Tracker Details for YTD, MTD and Yesterday. Counts Online leads, test rides (Home / Store / not taken), Booked-Active and Retail bookings (matched to Online leads) per Dealer Code and ASM, with conversion %s and an All Dealers total. Runs daily from Task Scheduler via `scripts/run_asmwise_report.bat` | `Output/ASMwise_Online_Summary_<yesterday>.xlsx`; log in `Output/logs/asmwise_report.log` |
 | `run_mis_check.js` | Opens every report under every **MIS** page (~274), classifies each one (OK / server error / timeout / blank / needs input), records its definition and available columns, and compares with the previous run | `MIS Reports/` (formatted Excel, CSV, summary, snapshot) and an email summary |
 
 Reports with more than 1,000 rows are read from the DMS's Excel download, so large dealers are fully covered.
@@ -28,9 +29,11 @@ cd E2E-DMS
 
 | File (never committed) | Created from | Fill in |
 |---|---|---|
-| `resources/credentials.json` | `resources/credentials.example.json` | `dealervalidUser` (Enquiry List, MIS check), `dealerUsers` (one entry per dealer for GSTR) and, for PDI, `PIDLogin` (the shared login) with `PIDDealerCodes` (the dealer codes), plus `PIDUsers` for any dealer with its own login; `stageUser` for the Stage DMS spec |
+| `resources/credentials.json` | `resources/credentials.example.json` | `dealervalidUser` (Enquiry List, MIS check), `dealerUsers` (one entry per dealer for GSTR) and, for PDI, `PIDLogin` (the shared login) with `PIDDealerCodes` (the dealer codes), plus `PIDUsers` for any dealer with its own login; `stageUser` for the Stage DMS spec; `riverUserValidUser` for the ASM-wise report |
 | `.env` | `.env.example` | `GMAIL_USER`, `GMAIL_APP_PASSWORD` (a [Gmail App Password](https://myaccount.google.com/apppasswords)), `GMAIL_TO`; optional `PDI_CC` |
 | `resources/VIN Details.xlsx` | copy it in by hand (any `VIN….xlsx` name works, e.g. `VIN.xlsx`; the newest is used) | VIN sheet for PDI: columns found by their header in row 1 (VIN, Battery No, Motor No, Charger), in any order |
+
+The ASM-wise report is Python (3.10+). Install its packages once with `pip install -r scripts/requirements.txt`.
 
 ---
 
@@ -43,6 +46,7 @@ npm run test:stage             # Stage DMS: login, enquiry, follow-up, booking, 
 npm run test:pdi:dry           # PDI: fill the form for every blank chassis, don't Save
 npm run test:pdi               # PDI: fill and Save (changes live DMS records; ~25 s per chassis)
 npm run report:pdi-daily       # PDI: the one email of the day, for all of today's runs (run it after the last PDI run)
+npm run report:asmwise         # ASM-wise Online summary (Python; ~6 min). Add -- --skip-download to rebuild from the last exports
 npm start                      # MIS report check (~10 min)
 npm test                       # every spec in tests/: Enquiry List, GSTR, Stage DMS and the legacy Finance Dashboard
                                # (PDI is skipped unless run with the commands above; Stage needs credentials.stageUser)

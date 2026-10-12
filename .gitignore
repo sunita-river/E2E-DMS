@@ -32,3 +32,6 @@ resources/VIN*.xlsx
 
 # Browser automation scratch files
 .playwright-mcp/
+
+# Python
+__pycache__/

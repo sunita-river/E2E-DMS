@@ -34,7 +34,7 @@ function Ensure-WingetPackage($command, $wingetId, $label) {
     Ok "$label installed"
 }
 
-# ---------- System software ----------
+# System software
 Step 'Checking Node.js'
 Ensure-WingetPackage 'node' 'OpenJS.NodeJS.LTS' 'Node.js'
 
@@ -52,7 +52,7 @@ if ($chromePaths | Where-Object { Test-Path $_ }) {
     Ok 'Google Chrome installed'
 }
 
-# ---------- Project packages ----------
+# Project packages
 Step 'Installing npm packages'
 if (Test-Path 'package-lock.json') { npm ci } else { npm install }
 if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
@@ -68,7 +68,7 @@ npx -y @playwright/mcp@latest --version
 if ($LASTEXITCODE -ne 0) { throw 'Playwright MCP download failed' }
 Ok 'Playwright MCP ready'
 
-# ---------- Config ----------
+# Config
 Step 'Checking .env'
 if (Test-Path '.env') {
     Ok '.env exists'

@@ -58,7 +58,7 @@ function readRunFiles(day: string): RunFile[] {
       const sheet = (name: string) => wb.Sheets[name] ? XLSX.utils.sheet_to_json<ResultRow>(wb.Sheets[name]!, { raw: false, defval: '' }).map(readPdiRow) : null;
       return { ...r, rows: sheet('PDI Blank Chassis') ?? sheet(wb.SheetNames[0]!) ?? [], dealers: sheet('Dealers') };
     })
-    // A dry run saved nothing, so the whole run is left out — including any errors it hit.
+    // A dry run saved nothing, so the whole run is left out, including any errors it hit.
     .filter((r) => {
       const dry = r.dealers ? r.dealers.some((d) => d.DryRun === 'Yes') : r.rows.some((row) => String(row.Status).startsWith('Dry run'));
       if (dry) console.log(`   (skipping dry run ${path.basename(r.file)})`);
@@ -116,7 +116,7 @@ export async function buildPdiDaily(day: string): Promise<PdiDay | null> {
     const heading = String(wb.Sheets[wb.SheetNames[0]!]?.A1?.v ?? '');
     const before = Number(heading.match(/·\s*(\d+)\s*run\(s\)/)?.[1] ?? 0);
     if (before > runs.length) {
-      throw new Error(`${path.basename(dailyPath)} covers ${before} run(s) but only ${runs.length} run file(s) from ${day} are left in ${RUNS_DIR} — not replacing it. Put the missing PDI_BlankChassis_*.xlsx files back, or set PDI_REBUILD_DAILY=1 to rebuild from what is left.`);
+      throw new Error(`${path.basename(dailyPath)} covers ${before} run(s) but only ${runs.length} run file(s) from ${day} are left in ${RUNS_DIR}, not replacing it. Put the missing PDI_BlankChassis_*.xlsx files back, or set PDI_REBUILD_DAILY=1 to rebuild from what is left.`);
     }
   }
 
@@ -129,7 +129,7 @@ export async function buildPdiDaily(day: string): Promise<PdiDay | null> {
 
   const withoutDealerList = runs.filter((r) => !r.dealers).length;
   if (withoutDealerList) {
-    console.log(`[WARN] ${withoutDealerList} earlier run file(s) predate the dealer list — dealers with no blank rows in those runs aren't shown.`);
+    console.log(`[WARN] ${withoutDealerList} earlier run file(s) predate the dealer list; dealers with no blank rows in those runs aren't shown.`);
   }
 
   deleteOldPdiFiles();
@@ -180,7 +180,7 @@ async function refreshPdiMaster(): Promise<PdiHistory> {
     const sheet = XLSX.readFile(file).Sheets[name];
     return sheet ? XLSX.utils.sheet_to_json<ResultRow>(sheet, { raw: false, defval: '' }).map(readPdiRow) : null;
   };
-  // Dealers whose check failed, from the daily file's Summary sheet (Dealer in A, "Failed: …" in F).
+  // Dealers whose check failed, from the daily file's Summary sheet (Dealer in A, "Failed: ..." in F).
   const failedDealers = (file: string) => {
     const sheet = XLSX.readFile(file).Sheets['Summary'];
     const rows = sheet ? XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: '' }) : [];

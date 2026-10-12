@@ -4,10 +4,12 @@ import os from 'os';
 import nodemailer from 'nodemailer';
 
 type CollectedCsvReport = { filename: string; content: string };
+// A spec attaches "<name>-missing.json" ({ title, file?, items: [{ column: value, ... }] }) to list
+// what it expected in DMS but did not find; it is shown as a red-highlighted section.
+type MissingReport = { title: string; file?: string; items: Record<string, string>[] };
 
-// Splits a single CSV row into fields, honoring double-quoted fields that may
-// contain commas, embedded quotes ("" escapes), or newlines — matching the
-// escaping toCsv() in enquiryListReport.spec.ts produces.
+// Handles quoted fields with commas, "" escapes and newlines, as written by toCsv()
+// in enquiryListReport.spec.ts.
 function parseCsv(csv: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
@@ -33,7 +35,7 @@ function parseCsv(csv: string): string[][] {
       row.push(field);
       field = '';
     } else if (char === '\r') {
-      // skip — the trailing \n in the \r\n pair ends the row
+      // the \n that follows ends the row
     } else if (char === '\n') {
       row.push(field);
       rows.push(row);
@@ -54,8 +56,6 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// Renders a CSV report as an HTML table so it reads directly in the email
-// body instead of requiring the recipient to open a separate attachment.
 function csvToHtmlTable(title: string, csv: string): string {
   const rows = parseCsv(csv.trim());
   if (rows.length === 0) return '';
@@ -75,17 +75,41 @@ function csvToHtmlTable(title: string, csv: string): string {
   `;
 }
 
-// Emails the run summary and any CSV reports (e.g. combined-summary.csv from
-// enquiryListReport.spec.ts) to a Gmail address once the whole run finishes,
-// with the CSV pasted directly into the email body as a table rather than
-// sent as a file attachment. Configure via env vars — nothing is hardcoded here:
+// Red block near the top of the email; an empty list gets a green "nothing missing" line.
+function missingToHtml(report: MissingReport): string {
+  const title = escapeHtml(report.title);
+  if (!report.items.length) {
+    return `<p style="font-family:sans-serif;color:#137333;background:#e6f4ea;border-left:4px solid #137333;padding:8px 12px;">${title}: nothing missing.</p>`;
+  }
+  const columns = Object.keys(report.items[0]!);
+  const thead = `<tr>${columns
+    .map((c) => `<th style="border:1px solid #f4c7c3;padding:4px 8px;background:#b3261e;color:#fff;text-align:left;">${escapeHtml(c)}</th>`)
+    .join('')}</tr>`;
+  const tbody = report.items
+    .map((item) => `<tr>${columns
+      .map((c) => `<td style="border:1px solid #f4c7c3;padding:4px 8px;background:#fce8e6;color:#b3261e;vertical-align:top;">${escapeHtml(item[c] ?? '')}</td>`)
+      .join('')}</tr>`)
+    .join('');
+  const file = report.file ? `<p style="font-family:sans-serif;font-size:12px;color:#5f6368;">Also saved to ${escapeHtml(report.file)}</p>` : '';
+  return `
+    <div style="border-left:4px solid #b3261e;padding-left:10px;margin:12px 0;">
+      <h3 style="font-family:sans-serif;color:#b3261e;margin:4px 0 8px;">${title} (${report.items.length})</h3>
+      <table style="border-collapse:collapse;font-family:sans-serif;font-size:13px;">${thead}${tbody}</table>
+      ${file}
+    </div>
+  `;
+}
+
+// Emails the run summary at the end of the run, with any CSV attachments (e.g.
+// combined-summary.csv from enquiryListReport.spec.ts) pasted into the body as tables.
 //   GMAIL_USER          the Gmail account to send from (also used as SMTP login)
-//   GMAIL_APP_PASSWORD  a Gmail App Password for that account (not its login password —
+//   GMAIL_APP_PASSWORD  a Gmail App Password for that account (not its login password;
 //                       generate one at https://myaccount.google.com/apppasswords)
 //   GMAIL_TO            recipient address (defaults to GMAIL_USER, i.e. mail yourself)
 // If any of these aren't set, the reporter logs why it's skipping instead of failing the run.
 export default class GmailReporter implements Reporter {
   private csvReports: CollectedCsvReport[] = [];
+  private missingReports: MissingReport[] = [];
   private passed = 0;
   private failed = 0;
   private skipped = 0;
@@ -96,6 +120,15 @@ export default class GmailReporter implements Reporter {
     else this.failed++;
 
     for (const attachment of result.attachments) {
+      if (attachment.name.endsWith('-missing.json')) {
+        const content = attachment.body ?? (attachment.path ? fs.readFileSync(attachment.path) : undefined);
+        try {
+          if (content) this.missingReports.push(JSON.parse(content.toString('utf-8')));
+        } catch {
+          console.log(`[gmail-reporter] Could not read ${attachment.name} - not shown in the email.`);
+        }
+        continue;
+      }
       if (!attachment.name.endsWith('.csv')) continue;
       const content = attachment.body ?? (attachment.path ? fs.readFileSync(attachment.path) : undefined);
       if (!content) continue;
@@ -105,12 +138,12 @@ export default class GmailReporter implements Reporter {
 
   async onEnd(result: FullResult) {
     if (this.passed + this.failed + this.skipped === 0) {
-      console.log('[gmail-reporter] Skipping email — no tests ran (e.g. --list).');
+      console.log('[gmail-reporter] Skipping email - no tests ran (e.g. --list).');
       return;
     }
     // PDI runs (npm run test:pdi / report:pdi-daily set PDI_RUN=1) have their own once-a-day email.
     if (process.env.PDI_RUN === '1') {
-      console.log('[gmail-reporter] Skipping email — PDI run; the PDI report is emailed once a day by npm run report:pdi-daily.');
+      console.log('[gmail-reporter] Skipping email - PDI run; the PDI report is emailed once a day by npm run report:pdi-daily.');
       return;
     }
 
@@ -120,7 +153,7 @@ export default class GmailReporter implements Reporter {
 
     if (!user || !appPassword || !to) {
       console.log(
-        '[gmail-reporter] Skipping email — set GMAIL_USER and GMAIL_APP_PASSWORD env vars (and optionally GMAIL_TO) to enable it.'
+        '[gmail-reporter] Skipping email - set GMAIL_USER and GMAIL_APP_PASSWORD env vars (and optionally GMAIL_TO) to enable it.'
       );
       return;
     }
@@ -141,6 +174,12 @@ export default class GmailReporter implements Reporter {
     const sourceHtml = runUrl
       ? `Run from: <b>GitHub Actions</b> - <a href="${runUrl}">open this run</a>`
       : `Run from: <b>local PC</b> (${escapeHtml(os.hostname())})`;
+    const missingCount = this.missingReports.reduce((n, r) => n + r.items.length, 0);
+    const missingHtml = this.missingReports.map(missingToHtml).join('<br/>');
+    const missingText = this.missingReports
+      .filter((r) => r.items.length)
+      .map((r) => `${r.title}:\n${r.items.map((i) => '  - ' + Object.values(i).join(' | ')).join('\n')}`)
+      .join('\n');
     const tablesHtml = this.csvReports.map((r) => csvToHtmlTable(r.filename, r.content)).join('<br/>');
 
     try {
@@ -149,12 +188,13 @@ export default class GmailReporter implements Reporter {
         to,
         // Optional comma-separated CC list from GMAIL_CC (kept out of the code/Git).
         ...(process.env.GMAIL_CC ? { cc: process.env.GMAIL_CC } : {}),
-        subject: `DMS Automation Report [${sourceTag}] - ${result.status} - ${runDate}`,
-        text: `Test run finished with status: ${result.status}\n${summary}\n${sourceText}`,
+        subject: `DMS Automation Report [${sourceTag}] - ${result.status}${missingCount ? ` - ${missingCount} not found in DMS` : ''} - ${runDate}`,
+        text: `Test run finished with status: ${result.status}\n${summary}\n${sourceText}${missingText ? `\n\n${missingText}` : ''}`,
         html: `
           <p style="font-family:sans-serif;">Test run finished with status: <b>${escapeHtml(result.status)}</b></p>
           <p style="font-family:sans-serif;">${escapeHtml(summary)}</p>
           <p style="font-family:sans-serif;">${sourceHtml}</p>
+          ${missingHtml}
           ${tablesHtml}
         `,
       });

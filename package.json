@@ -13,6 +13,7 @@
     "test:pdi:dry": "set PDI_RUN=1&& set PDI_DRY_RUN=1&& playwright test tests/PDI.spec.ts --headed",
     "test:pdi": "set PDI_RUN=1&& set PDI_DRY_RUN=&& playwright test tests/PDI.spec.ts --headed",
     "report:pdi-daily": "set PDI_RUN=1&& playwright test tests/PDIDailyReport.spec.ts --reporter=line",
+    "report:asmwise": "python scripts/asmwise_report.py",
     "report:html":"playwright show-report",
     "start": "node run_mis_check.js",
     "mis": "node run_mis_check.js"

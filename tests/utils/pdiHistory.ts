@@ -8,7 +8,7 @@ import { outcomeOf, ResultRow } from './pdiReport';
 // Totals walk the days in order, keeping each chassis's latest result:
 //   - A chassis that is updated counts as updated from then on.
 //   - A chassis that was not updated on one day but is missing from a later day's list (its dealer was
-//     checked and the row was no longer blank) counts as updated too — the same rule as within a day.
+//     checked and the row was no longer blank) counts as updated too, as within a day.
 //     Dealers that failed that day are skipped, since their chassis weren't checked.
 
 type Outcome = ReturnType<typeof outcomeOf>;
