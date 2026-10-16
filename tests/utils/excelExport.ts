@@ -22,6 +22,6 @@ export function readExcelDownload(download: Download): Promise<{ headers: string
       defval: '',
     });
 
-    return { headers: headers ?? [], rows: dataRows };
+    return { headers: (headers ?? []).map(String), rows: dataRows };
   });
 }

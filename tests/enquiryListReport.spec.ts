@@ -237,7 +237,7 @@ test.describe('MFR Vehicles Reports - Enquiry List and Product-wise Sales Detail
       const dated = rows.map((r) => ({ ...r, __date: getField(r, ...dateField) }));
       if (!problems.length) {
         problems.push(...blankValues(dated.map((r) => ({ 'Booking No': getField(r, ...BOOKING_NO), 'Dealer Code': getField(r, ...DEALER_CODE) })), ['Booking No', 'Dealer Code']));
-        problems.push(...datesOutsideRange(dated, '__date', REPORT_FROM, REPORT_TO).map((p) => p.replace('__date', dateField[0])));
+        problems.push(...datesOutsideRange(dated, '__date', REPORT_FROM, REPORT_TO).map((p) => p.replace('__date', dateField[0]!)));
       }
       expect.soft(problems, `${label} report data problems:\n${problems.join('\n')}`).toEqual([]);
     }

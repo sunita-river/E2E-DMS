@@ -1,0 +1,89 @@
+name: ASM-wise Report
+
+# Downloads the Enquiry List and Booking Master Tracker exports, builds the ASM-wise summary and
+# mails each ASM in ASM_Reportwise/Mapping/ASM_Name_Mapping.xlsx. Scheduled twice a day; run it by
+# hand (Actions -> ASM-wise Report -> Run workflow) to preview or to send a test copy to GMAIL_TO.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'preview = build only, test = all emails to GMAIL_TO, send = mail the ASMs'
+        type: choice
+        options: [test, preview, send]
+        default: test
+  schedule:
+    - cron: '30 3 * * *'    # every day 09:00 IST
+    - cron: '30 13 * * *'   # every day 19:00 IST
+
+concurrency:
+  group: asmwise-report
+  cancel-in-progress: false
+
+jobs:
+  asmwise:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TZ: Asia/Kolkata                 # "yesterday" in Indian time
+      HEADLESS: '1'
+      BROWSER_CHANNEL: chrome
+      PYTHONIOENCODING: utf-8
+      CREDENTIALS_FILE: ${{ github.workspace }}/resources/credentials.json
+      GMAIL_USER: ${{ secrets.GMAIL_USER }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      GMAIL_TO: ${{ secrets.GMAIL_TO }}
+      ASM_MAIL_FROM: ${{ secrets.ASM_MAIL_FROM }}
+      MODE: ${{ github.event.inputs.mode || 'send' }}   # scheduled runs send
+    steps:
+      - name: Check the DMS can be reached from GitHub
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 https://rivermobility.gaindms.com/ || echo 000)
+          echo "DMS answered with HTTP $code"
+          if [ "$code" = "000" ] || [ "$code" -ge 500 ]; then
+            echo "::error::GitHub's servers could not reach https://rivermobility.gaindms.com/ (HTTP $code)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: ASM_Reportwise/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r ASM_Reportwise/requirements.txt
+          python -m playwright install --with-deps chrome
+
+      - name: Write DMS credentials from the CREDENTIALS_JSON secret
+        env:
+          CREDS: ${{ secrets.CREDENTIALS_JSON }}
+        run: |
+          if [ -z "$CREDS" ]; then echo "::error::Repository secret CREDENTIALS_JSON is not set"; exit 1; fi
+          printf '%s' "$CREDS" > "$CREDENTIALS_FILE"
+          python -c "import json,os; json.load(open(os.environ['CREDENTIALS_FILE']))['riverUserValidUser']" \
+            || { echo "::error::CREDENTIALS_JSON is not valid JSON or has no riverUserValidUser"; exit 1; }
+
+      - name: Build the ASM-wise summary
+        run: python ASM_Reportwise/asmwise_report.py
+
+      - name: Email the ASMs (${{ env.MODE }})
+        run: |
+          case "$MODE" in
+            send)    python ASM_Reportwise/asm_email.py --send ;;
+            test)    python ASM_Reportwise/asm_email.py --send --test-to "$GMAIL_TO" ;;
+            *)       python ASM_Reportwise/asm_email.py ;;
+          esac
+
+      # The summary holds counts only; the previews hold the ASM emails as sent.
+      - name: Upload the summary and email previews
+        uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() }}
+        with:
+          name: asmwise-report
+          path: |
+            ASM_Reportwise/Output/*.xlsx
+            ASM_Reportwise/Output/email_preview/
+          if-no-files-found: ignore
+          retention-days: 7

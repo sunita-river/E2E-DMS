@@ -1,15 +1,19 @@
-"""ASM-wise Online funnel report.
+"""ASM-wise funnel report, split by lead source.
 
 Logs in to River DMS as riverUserValidUser, exports the Enquiry List and Booking Master Tracker
-Details for YTD, MTD and Yesterday, and builds Output/ASMwise_Online_Summary_<yesterday>.xlsx with
-one block of rows per Dealer Code + ASM:
+Details for Yesterday, MTD and YTD into ASM_Reportwise/Downloads, and builds
+ASM_Reportwise/Output/ASMwise_AllSources_Summary_<yesterday>.xlsx with one block of rows per
+Dealer Code + ASM and a Yesterday / MTD / YTD column group per source (see SOURCES):
 
-    Dealer Code | ASM | Online | YTD | MTD | Yesterday
+    Dealer Code | ASM | Metric | Total Transactions Yesterday MTD YTD | Online ... | Activities ...
+
+Bookings take the Lead Source of their enquiry (Enquiry Number = Lead No); a booking whose lead
+isn't in the exports gets the usual Lead Source of its Primary Enquiry Source.
 
 Usage (from the repo root):
-    python scripts/asmwise_report.py                   download the exports and build the summary
-    python scripts/asmwise_report.py --skip-download   rebuild from the last downloaded exports
-    python scripts/asmwise_report.py --keep-downloads  keep the exports under Downloads
+    python ASM_Reportwise/asmwise_report.py                   download the exports and build the summary
+    python ASM_Reportwise/asmwise_report.py --skip-download   rebuild from the last downloaded exports
+    python ASM_Reportwise/asmwise_report.py --keep-downloads  keep the exports under ASM_Reportwise/Downloads
 
 Environment: CREDENTIALS_FILE, ASM_OUTPUT_DIR, ASM_DOWNLOAD_DIR, BROWSER_CHANNEL, HEADLESS=1,
 ASM_TODAY=YYYY-MM-DD (run as of that date).
@@ -33,25 +37,29 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from playwright.sync_api import Page, TimeoutError as PWTimeout, sync_playwright
 
-ROOT = Path(__file__).resolve().parent.parent
+HERE = Path(__file__).resolve().parent  # ASM_Reportwise
+ROOT = HERE.parent
 BASE_URL = "https://rivermobility.gaindms.com/"
 CREDENTIALS_FILE = Path(os.environ.get("CREDENTIALS_FILE", ROOT / "resources" / "credentials.json"))
-OUTPUT_DIR = Path(os.environ.get("ASM_OUTPUT_DIR", ROOT / "Output"))
-DOWNLOAD_DIR = Path(os.environ.get("ASM_DOWNLOAD_DIR", ROOT / "Downloads" / "ASMwise"))
+OUTPUT_DIR = Path(os.environ.get("ASM_OUTPUT_DIR", HERE / "Output"))
+DOWNLOAD_DIR = Path(os.environ.get("ASM_DOWNLOAD_DIR", HERE / "Downloads"))
 
-# The Enquiry List form can't filter on Lead Source, so the export is filtered here.
-LEAD_SOURCE = "Online"
-# Sec Lead Source values to keep (e.g. ["Meta forms", "Google"]); None keeps all.
-SECONDARY_SOURCES: list[str] | None = None
-# Count only bookings made from an Online lead (booking Enquiry Number = enquiry Lead No).
-BOOKINGS_ONLINE_ONLY = True
+# Column groups: (heading, Lead Source counted; None = every source). The Enquiry List form
+# can't filter on Lead Source, so the exports are split here.
+SOURCES: list[tuple[str, str | None]] = [
+    ("Total Transactions", None), ("Online", "Online"), ("Walkin", "Walk-in"),
+    ("Telephone", "Telephone"), ("Activities", "Activation"),
+]
+TOTAL = SOURCES[0][0]
+SOURCE_LABEL = "All Sources"
+SUMMARY_NAME = f"ASMwise_{SOURCE_LABEL.replace(' ', '')}_Summary"  # + _<dd-mm-yyyy>.xlsx
 NO_TEST_RIDE = "Test Ride not taken"
 RETAIL_STATUSES = {"delivered", "invoice", "invoiced"}
 # Any other status (e.g. Cancelled) is counted as neither Booked-Active nor Retail.
 BOOKED_ACTIVE_STATUSES = {"booked", "booked-active", "booked - active", "active", "booking", "open"}
 
 METRICS = [
-    "Test Ride Status", "Home Testride", "Store Testride", NO_TEST_RIDE,
+    "Enquiry", "Home Testride", "Store Testride", NO_TEST_RIDE,
     "Booked-Active", "Retail",
     "Enq to TR Conv%", "Enq to Booking Conv %", "Booking to Retails Conv %",
 ]
@@ -74,10 +82,19 @@ def periods(today: date) -> list[Period]:
     yesterday = today - timedelta(days=1)
     fy_start = date(yesterday.year if yesterday.month >= 4 else yesterday.year - 1, 4, 1)  # FY starts 1 April
     return [
-        Period("YTD", fy_start, yesterday),
-        Period("MTD", yesterday.replace(day=1), yesterday),
         Period("Yesterday", yesterday, yesterday),
+        Period("MTD", yesterday.replace(day=1), yesterday),
+        Period("YTD", fy_start, yesterday),
     ]
+
+
+def column(group: str, period_label: str) -> str:
+    return f"{group} {period_label}"
+
+
+def columns(plist: list[Period]) -> list[str]:
+    """The value columns, source group by source group."""
+    return [column(g, p.label) for g, _ in SOURCES for p in plist]
 
 
 def export_name(name: str, period: Period) -> str:
@@ -288,12 +305,7 @@ def norm_dealer(v: str) -> str:
 
 def enquiry_counts(df: pd.DataFrame) -> pd.DataFrame:
     dealer, asm, lead = col(df, "Dealer Code"), col(df, "ASM Name"), col(df, "Lead No")
-    source = col(df, "Lead Source", "Primary Enquiry Source")
     tr = col(df, "Testride required at")
-    df = df[df[source].str.casefold() == LEAD_SOURCE.casefold()]
-    if SECONDARY_SOURCES is not None:
-        sec = col(df, "Sec Lead Source", "Secondary Enquiry Source")
-        df = df[df[sec].str.casefold().isin([s.casefold() for s in SECONDARY_SOURCES])]
     df = df.assign(**{dealer: df[dealer].map(norm_dealer),
                       tr: df[tr].replace("", NO_TEST_RIDE)})
     # A lead can have several rows; count it once as Home, else Store, else not taken.
@@ -303,23 +315,33 @@ def enquiry_counts(df: pd.DataFrame) -> pd.DataFrame:
     grouped = (df.groupby([dealer, asm, tr])[lead].nunique()
                  .unstack(tr, fill_value=0)
                  .reindex(columns=["Home Testride", "Store Testride", NO_TEST_RIDE], fill_value=0))
-    grouped["Test Ride Status"] = df.groupby([dealer, asm])[lead].nunique()
+    grouped["Enquiry"] = df.groupby([dealer, asm])[lead].nunique()
     grouped.index.names = ["Dealer Code", "ASM"]
     return grouped
 
 
-def online_leads(enquiries: pd.DataFrame) -> set[str]:
-    """Online Lead Nos from the YTD list, so older leads booked this month still match."""
-    source, lead = col(enquiries, "Lead Source"), col(enquiries, "Lead No")
-    return set(enquiries.loc[enquiries[source].str.casefold() == LEAD_SOURCE.casefold(), lead])
+def lead_sources(enquiries: list[pd.DataFrame]) -> tuple[dict[str, str], dict[str, str]]:
+    """Lead No -> Lead Source, and Sec Lead Source (casefolded) -> its most common Lead Source."""
+    df = pd.concat([e[[col(e, "Lead No"), col(e, "Lead Source"), col(e, "Sec Lead Source")]]
+                    .set_axis(["lead", "src", "sec"], axis=1) for e in enquiries])
+    df = df[df["src"] != ""]
+    by_lead = df.drop_duplicates("lead").set_index("lead")["src"].to_dict()
+    sec = df[df["sec"] != ""]
+    by_sec = sec.groupby(sec["sec"].str.casefold())["src"].agg(lambda s: s.mode().iat[0]).to_dict()
+    return by_lead, by_sec
 
 
-def booking_counts(df: pd.DataFrame, online: set[str] | None) -> tuple[pd.DataFrame, set[str], int]:
+def booking_sources(df: pd.DataFrame, by_lead: dict[str, str], by_sec: dict[str, str]) -> pd.Series:
+    # The tracker's Primary Enquiry Source is the enquiry's Sec Lead Source (Meta, Google, ...),
+    # so a booking takes its lead's Lead Source, else the usual one for that secondary source.
+    lead = df[col(df, "Enquiry Number", "Enquiry No")].map(by_lead)
+    sec = df[col(df, "Primary Enquiry Source")].str.casefold().map(by_sec)
+    return lead.fillna(sec).fillna("")
+
+
+def booking_counts(df: pd.DataFrame) -> tuple[pd.DataFrame, set[str]]:
     dealer, asm, status = col(df, "Dealer Code"), col(df, "ASM Name"), col(df, "Status")
     order = col(df, "Sales Order", "Sales order")
-    if online is not None:
-        # The tracker has no Online source, so bookings are matched to Online leads.
-        df = df[df[col(df, "Enquiry Number", "Enquiry No")].isin(online)]
 
     def bucket(s: str) -> str:
         s = s.strip().casefold()
@@ -335,7 +357,7 @@ def booking_counts(df: pd.DataFrame, online: set[str] | None) -> tuple[pd.DataFr
                  .unstack("_bucket", fill_value=0)
                  .reindex(columns=["Booked-Active", "Retail"], fill_value=0))
     grouped.index.names = ["Dealer Code", "ASM"]
-    return grouped, other, len(df)
+    return grouped, other
 
 
 def pct(num, den):
@@ -343,63 +365,62 @@ def pct(num, den):
 
 
 def add_conversions(t: pd.DataFrame) -> None:
-    t["Enq to TR Conv%"] = pct(t["Home Testride"] + t["Store Testride"], t["Test Ride Status"])
-    t["Enq to Booking Conv %"] = pct(t["Booked-Active"], t["Test Ride Status"])
+    t["Enq to TR Conv%"] = pct(t["Home Testride"] + t["Store Testride"], t["Enquiry"])
+    t["Enq to Booking Conv %"] = pct(t["Booked-Active"], t["Enquiry"])
     t["Booking to Retails Conv %"] = pct(t["Retail"], t["Booked-Active"] + t["Retail"])
 
 
 def metrics(enq: pd.DataFrame, bkg: pd.DataFrame) -> pd.DataFrame:
-    m = enq.join(bkg, how="outer").fillna(0)
-    for c in METRICS:
-        if c not in PERCENT_METRICS and c not in m:
-            m[c] = 0
-    m = m.astype(int)
+    m = enq.join(bkg, how="outer").fillna(0).astype(int)
     add_conversions(m)
     return m[METRICS]
 
 
 def build_summary(files: dict[tuple[str, str], Path], today: date) -> pd.DataFrame:
-    per_period = {}
+    plist = periods(today)
+    per_column = {}
     enquiries = {}
-    for period in periods(today):
+    for period in plist:
         log(f"Reading {period.label} exports...")
         enquiries[period.label] = read_export(files[("Enquiry List", period.label)])
-    online = online_leads(enquiries["YTD"]) if BOOKINGS_ONLINE_ONLY else None
+    by_lead, by_sec = lead_sources(list(enquiries.values()))
 
-    for period in periods(today):
+    for period in plist:
         enq_df = enquiries[period.label]
         bkg_df = read_export(files[("Booking Master Tracker", period.label)])
-        enq = enquiry_counts(enq_df)
-        bkg, other, kept = booking_counts(bkg_df, online)
-        log(f"{period.label}: {len(enq_df)} enquiry rows -> {int(enq['Test Ride Status'].sum())} {LEAD_SOURCE} leads; "
-            f"{len(bkg_df)} booking rows -> {kept} {LEAD_SOURCE if online is not None else 'total'} -> "
-            f"{int(bkg['Booked-Active'].sum())} Booked-Active, {int(bkg['Retail'].sum())} Retail")
-        if other:
-            log(f"[WARN] {period.label}: booking statuses counted as neither Booked-Active nor Retail: {sorted(other)}")
-        per_period[period.label] = metrics(enq, bkg)
+        enq_src = enq_df[col(enq_df, "Lead Source")].str.casefold()
+        bkg_src = booking_sources(bkg_df, by_lead, by_sec).str.casefold()
+        log(f"{period.label}: {len(enq_df)} enquiry rows, {len(bkg_df)} booking rows "
+            f"({int((bkg_src == '').sum())} bookings with no lead source - Total only)")
+        for group, source in SOURCES:
+            e = enq_df if source is None else enq_df[enq_src == source.casefold()]
+            b = bkg_df if source is None else bkg_df[bkg_src == source.casefold()]
+            enq, (bkg, other) = enquiry_counts(e), booking_counts(b)
+            if source is None and other:
+                log(f"[WARN] {period.label}: booking statuses counted as neither Booked-Active nor Retail: {sorted(other)}")
+            log(f"  {group}: {int(enq['Enquiry'].sum())} leads, "
+                f"{int(bkg['Booked-Active'].sum())} Booked-Active, {int(bkg['Retail'].sum())} Retail")
+            per_column[column(group, period.label)] = metrics(enq, bkg)
 
     # One row per Dealer Code / ASM / metric; every pair gets all metric rows so the blocks line up.
-    pairs = sorted(set().union(*(m.index for m in per_period.values())))
+    pairs = sorted(set().union(*(m.index for m in per_column.values())))
     full = pd.MultiIndex.from_tuples([(d, a, k) for d, a in pairs for k in METRICS],
-                                     names=["Dealer Code", "ASM", "Online"])
-    long = pd.concat({label: m.stack(future_stack=True) for label, m in per_period.items()}, axis=1)
+                                     names=["Dealer Code", "ASM", "Metric"])
+    long = pd.concat({label: m.stack(future_stack=True) for label, m in per_column.items()}, axis=1)
     long = long.reindex(full).reset_index()
-    long["_order"] = long["Online"].map(METRICS.index)
+    long["_order"] = long["Metric"].map(METRICS.index)
     long = long.sort_values(["Dealer Code", "ASM", "_order"]).drop(columns="_order")
-    count_cols = [p.label for p in periods(today)]
-    is_count = ~long["Online"].isin(PERCENT_METRICS)
+    count_cols = columns(plist)
+    is_count = ~long["Metric"].isin(PERCENT_METRICS)
     long.loc[is_count, count_cols] = long.loc[is_count, count_cols].fillna(0)
-    return long[["Dealer Code", "ASM", "Online", *count_cols]].reset_index(drop=True)
+    return long[["Dealer Code", "ASM", "Metric", *count_cols]].reset_index(drop=True)
 
 
 def overall(summary: pd.DataFrame, labels: list[str]) -> pd.DataFrame:
     """All-dealer totals; conversions are worked out from the totals."""
-    t = summary[~summary["Online"].isin(PERCENT_METRICS)].groupby("Online")[labels].sum().T
-    for m in METRICS:
-        if m not in PERCENT_METRICS and m not in t:
-            t[m] = 0
+    t = summary[~summary["Metric"].isin(PERCENT_METRICS)].groupby("Metric")[labels].sum().T
     add_conversions(t)
-    out = t[METRICS].T.reset_index(names="Online")
+    out = t[METRICS].T.reset_index(names="Metric")
     out.insert(0, "ASM", "")
     out.insert(0, "Dealer Code", "All Dealers")
     return out
@@ -407,10 +428,10 @@ def overall(summary: pd.DataFrame, labels: list[str]) -> pd.DataFrame:
 
 def write_excel(summary: pd.DataFrame, today: date, files: dict) -> Path:
     plist = periods(today)
-    table = pd.concat([overall(summary, [p.label for p in plist]), summary], ignore_index=True)
+    table = pd.concat([overall(summary, columns(plist)), summary], ignore_index=True)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = OUTPUT_DIR / f"ASMwise_Online_Summary_{today - timedelta(days=1):%d-%m-%Y}.xlsx"
+    path = OUTPUT_DIR / f"{SUMMARY_NAME}_{today - timedelta(days=1):%d-%m-%Y}.xlsx"
     try:
         _write(table, path, plist, files)
     except PermissionError:
@@ -421,9 +442,9 @@ def write_excel(summary: pd.DataFrame, today: date, files: dict) -> Path:
 
 
 def _write(table: pd.DataFrame, path: Path, plist: list[Period], files: dict) -> None:
-    labels = [p.label for p in plist]
+    labels = columns(plist)
     with pd.ExcelWriter(path, engine="openpyxl") as xw:
-        table.to_excel(xw, sheet_name="Master Summary", index=False, startrow=2)
+        table.to_excel(xw, sheet_name="Master Summary", index=False, startrow=3)
         pd.DataFrame(
             [{"Report": n, "Period": p, "File": f.name} for (n, p), f in files.items()]
         ).to_excel(xw, sheet_name="Sources", index=False)
@@ -437,20 +458,31 @@ def _write(table: pd.DataFrame, path: Path, plist: list[Period], files: dict) ->
     band_fill = PatternFill("solid", fgColor="DDEBF7")
     total_fill = PatternFill("solid", fgColor="FFF2CC")
 
-    ws["A1"] = f"ASM-wise {LEAD_SOURCE} Enquiry > Test Ride > Booking > Retail"
+    ws["A1"] = f"ASM-wise {SOURCE_LABEL} Enquiry > Test Ride > Booking > Retail"
     ws["A1"].font = Font(bold=True, size=14)
     ws["A2"] = " | ".join(f"{p.label}: {p.start:%d-%b-%Y} to {p.end:%d-%b-%Y}" for p in plist)
     ws["A2"].font = Font(italic=True, color="595959")
 
-    for c in range(1, ncols + 1):
-        cell = ws.cell(row=3, column=c)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = head_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = border
+    # Two header rows: the source groups (row 3) over the periods (row 4).
+    for c in (1, 2, 3):
+        ws.cell(row=3, column=c, value=ws.cell(row=4, column=c).value)
+        ws.merge_cells(start_row=3, end_row=4, start_column=c, end_column=c)
+    for i, (group, _) in enumerate(SOURCES):
+        start = 4 + i * len(plist)
+        ws.cell(row=3, column=start, value=group)
+        ws.merge_cells(start_row=3, end_row=3, start_column=start, end_column=start + len(plist) - 1)
+        for j, p in enumerate(plist):
+            ws.cell(row=4, column=start + j, value=p.label)
+    for r in (3, 4):
+        for c in range(1, ncols + 1):
+            cell = ws.cell(row=r, column=c)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = head_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = border
 
     # First block is the All Dealers total; the rest are shaded alternately.
-    first = 4
+    first = 5
     n = len(METRICS)
     for block, start in enumerate(range(first, first + len(table), n)):
         end = start + n - 1
@@ -475,17 +507,17 @@ def _write(table: pd.DataFrame, path: Path, plist: list[Period], files: dict) ->
             ws.cell(row=start, column=c).alignment = Alignment(vertical="center", wrap_text=True)
             ws.cell(row=start, column=c).font = Font(bold=True)
 
-    for c, width in zip(range(1, ncols + 1), [14, 26, 28, *[13] * len(labels)]):
+    for c, width in zip(range(1, ncols + 1), [14, 26, 28, *[11] * len(labels)]):
         ws.column_dimensions[get_column_letter(c)].width = width
-    ws.freeze_panes = "D4"
+    ws.freeze_panes = "D5"
     ws.sheet_view.showGridLines = False
     wb["Sources"].column_dimensions["C"].width = 60
     wb.save(path)
 
 
 def clear_downloads() -> None:
-    """Empties <repo>/Downloads, skipping anything still open."""
-    root = ROOT / "Downloads"
+    """Empties the download folder, skipping anything still open."""
+    root = DOWNLOAD_DIR
     if not root.is_dir():
         return
     removed = 0

@@ -15,7 +15,8 @@ import { buildPdiDaily, localDate, RUNS_DIR, OUTPUT_DIR } from './utils/pdiDaily
 //
 // Settings (all optional):
 //   PDI_DEALER    only these dealer codes, comma-separated, e.g. 332009,332008 (default: all PDI dealers)
-//   PDI_VIN_FILE  VIN Details workbook (default: the newest resources/VIN*.xlsx, e.g. "VIN Details.xlsx")
+//   PDI_VIN_FILE  VIN Details workbook or CSV (default: the newest resources/VIN*.xlsx / VIN*.csv, e.g. the
+//                 VIN_Details.csv that npm run pdi:vin fetches from the vin-data branch)
 //   PDI_DRY_RUN   1 = fill the form but don't click Save (for a first check)
 //   PDI_PARALLEL  dealers processed at once, each in its own browser window (default 3; 1 = one at a time)
 //   PDI_LOAD_TIMEOUT_S  longest wait for Show / Save to reload the page (default 30)
@@ -135,8 +136,9 @@ const VIN_COLUMNS: { key: keyof VinDetails | 'vin'; header: RegExp; label: strin
 ];
 
 function loadVinDetails(): Map<string, VinDetails> {
-  if (!fs.existsSync(VIN_FILE)) throw new Error(`VIN Details workbook not found: ${VIN_FILE}. Put a "VIN*.xlsx" in resources/ or set PDI_VIN_FILE.`);
-  const workbook = XLSX.readFile(VIN_FILE);
+  if (!fs.existsSync(VIN_FILE)) throw new Error(`VIN Details workbook not found: ${VIN_FILE}. Put a "VIN*.xlsx" in resources/, run npm run pdi:vin, or set PDI_VIN_FILE.`);
+  // raw: a CSV's cells stay text, so a long serial isn't turned into a number like 8.9E+18 (no effect on .xlsx).
+  const workbook = XLSX.readFile(VIN_FILE, { raw: true });
   const sheet = workbook.Sheets[workbook.SheetNames[0]!]!;
   const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: '' });
   const headers = (rows[0] || []).map((h) => String(h).trim().toLowerCase());

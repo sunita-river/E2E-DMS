@@ -1,0 +1,143 @@
+name: PDI
+
+# PDI blank Engine / Battery / Charger fill-up (tests/PDI.spec.ts). It SAVES to the live DMS.
+# The VIN details come from the (private) VIN Google Sheet: its Apps Script
+# (resources/apps-script/pushVinToGitHub.gs) sends it every 30 minutes, when changed, to VIN_Details.csv
+# on the vin-data branch, and each run reads that file. The team only has to keep the sheet up to date.
+#   - hourly 08:00-18:00 IST: fill and Save for every PDI dealer (no email)
+#   - daily 19:00 IST: the day's one PDI email, covering all of that day's runs
+# GitHub may start scheduled runs some minutes late.
+on:
+  schedule:
+    - cron: '30 2-12 * * *'   # 08:00-18:00 IST, hourly
+    - cron: '30 13 * * *'     # 19:00 IST
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'What to run'
+        type: choice
+        options: [pdi, pdi-dry-run, daily-email]
+        default: pdi
+      dealers:
+        description: 'Only these dealer codes, comma-separated (blank = all PDI dealers)'
+        required: false
+        default: ''
+
+# One PDI job at a time: an hourly run still going makes the next one wait instead of overlapping,
+# and each job sees the state the previous one saved.
+concurrency:
+  group: pdi
+  cancel-in-progress: false
+
+jobs:
+  pdi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      CI: '1'
+      TZ: Asia/Kolkata                 # "today" for the daily file and email, in Indian time
+      BROWSER_CHANNEL: chrome
+      PDI_RUN: '1'
+      CREDENTIALS_FILE: ${{ github.workspace }}/resources/credentials.json
+      PDI_DEALER: ${{ github.event.inputs.dealers }}
+      GMAIL_USER: ${{ secrets.GMAIL_USER }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      GMAIL_TO: ${{ secrets.GMAIL_TO }}
+      PDI_CC: ${{ secrets.PDI_CC }}
+      TASK: ${{ github.event.inputs.task || (github.event.schedule == '30 13 * * *' && 'daily-email') || 'pdi' }}
+    steps:
+      - name: Check the DMS can be reached from GitHub
+        if: env.TASK != 'daily-email'
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 https://rivermobility.gaindms.com/ || echo 000)
+          echo "DMS answered with HTTP $code"
+          if [ "$code" = "000" ] || [ "$code" -ge 500 ]; then
+            echo "::error::GitHub's servers could not reach https://rivermobility.gaindms.com/ (HTTP $code)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Google Chrome for Playwright
+        if: env.TASK != 'daily-email'
+        run: npx playwright install --with-deps chrome
+
+      - name: Write DMS credentials from the CREDENTIALS_JSON secret
+        env:
+          CREDS: ${{ secrets.CREDENTIALS_JSON }}
+        run: |
+          if [ -z "$CREDS" ]; then echo "::error::Repository secret CREDENTIALS_JSON is not set"; exit 1; fi
+          printf '%s' "$CREDS" > "$CREDENTIALS_FILE"
+          node -e "const c=JSON.parse(require('fs').readFileSync(process.env.CREDENTIALS_FILE,'utf8')); if(!c.PIDLogin&&!(c.PIDUsers||[]).length) process.exit(2)" \
+            || { echo "::error::CREDENTIALS_JSON is not valid JSON or has no PIDLogin / PIDDealerCodes / PIDUsers"; exit 1; }
+
+      - name: Get the VIN sheet from the vin-data branch
+        if: env.TASK != 'daily-email'
+        run: |
+          git fetch --depth=1 origin vin-data \
+            || { echo "::error::No vin-data branch yet. Run pushVinToGitHub in the VIN sheet's Apps Script (resources/apps-script/pushVinToGitHub.gs)."; exit 1; }
+          git show FETCH_HEAD:VIN_Details.csv > resources/VIN_Details.csv
+          echo "VIN sheet last changed: $(git log -1 --format='%cd' --date=format-local:'%d-%m-%Y %H:%M IST' FETCH_HEAD), $(($(wc -l < resources/VIN_Details.csv) - 1)) rows"
+
+      # The day's run files, daily copy, history, VIN column baseline and "emailed today" marker,
+      # carried from one job to the next (each GitHub runner starts empty).
+      - name: Restore PDI state
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            Output/PDI runs/
+            Output/PDI_*
+          key: pdi-state-${{ github.run_id }}
+          restore-keys: pdi-state-
+
+      - name: PDI fill and Save
+        if: env.TASK == 'pdi'
+        run: npx playwright test tests/PDI.spec.ts
+
+      - name: PDI dry run (fill, no Save)
+        if: env.TASK == 'pdi-dry-run'
+        env:
+          PDI_DRY_RUN: '1'
+        run: npx playwright test tests/PDI.spec.ts
+
+      - name: Daily PDI email
+        if: env.TASK == 'daily-email'
+        run: npx playwright test tests/PDIDailyReport.spec.ts --reporter=line
+
+      - name: Save PDI state for the next run
+        uses: actions/cache/save@v5
+        if: ${{ !cancelled() && hashFiles('Output/PDI_*', 'Output/PDI runs/**') != '' }}
+        with:
+          path: |
+            Output/PDI runs/
+            Output/PDI_*
+          key: pdi-state-${{ github.run_id }}
+
+      # Chassis-level results - keep the downloads short-lived.
+      - name: Upload PDI output
+        uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() }}
+        with:
+          name: pdi-output
+          path: |
+            Output/PDI runs/
+            Output/PDI_*
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload Playwright report and results
+        uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-results
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
