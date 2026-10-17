@@ -109,6 +109,10 @@ jobs:
             git show "FETCH_HEAD:$f" > "Output/PDI runs/$n"
             echo "Added PC run $n"
           done
+          if git cat-file -e FETCH_HEAD:history/PDI_History.json 2>/dev/null; then
+            git show FETCH_HEAD:history/PDI_History.json > "$RUNNER_TEMP/pc_history.json"
+            node scripts/pdiMergeHistory.js Output/PDI_History.json "$RUNNER_TEMP/pc_history.json"
+          fi
 
       - name: PDI fill and Save
         if: env.TASK == 'pdi'

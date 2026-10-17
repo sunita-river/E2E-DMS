@@ -12,6 +12,7 @@ const path = require('node:path');
 
 const BRANCH = 'pdi-runs';
 const RUNS_DIR = path.join(process.env.GSTR_OUTPUT_DIR || path.join(process.cwd(), 'Output'), 'PDI runs');
+const HISTORY_FILE = path.join(path.dirname(RUNS_DIR), 'PDI_History.json');
 const KEEP_DAYS = 3;
 
 const git = (args, env) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } }).trim();
@@ -45,6 +46,11 @@ function main() {
     for (const f of files) {
       const blob = git(['hash-object', '-w', path.join(RUNS_DIR, f)]);
       git(['update-index', '--add', '--cacheinfo', `100644,${blob},runs/${f}`], env);
+    }
+    // The PC's all-time history too, so GitHub's totals include the days before it started running PDI.
+    if (fs.existsSync(HISTORY_FILE)) {
+      const blob = git(['hash-object', '-w', HISTORY_FILE]);
+      git(['update-index', '--add', '--cacheinfo', `100644,${blob},history/PDI_History.json`], env);
     }
     const tree = git(['write-tree'], env);
     if (parent && tree === git(['rev-parse', `${parent}^{tree}`])) {
