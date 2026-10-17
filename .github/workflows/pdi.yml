@@ -16,7 +16,7 @@ on:
       task:
         description: 'What to run'
         type: choice
-        options: [pdi, pdi-dry-run, daily-email]
+        options: [pdi, daily-email]
         default: pdi
       dealers:
         description: 'Only these dealer codes, comma-separated (blank = all PDI dealers)'
@@ -112,12 +112,6 @@ jobs:
 
       - name: PDI fill and Save
         if: env.TASK == 'pdi'
-        run: npx playwright test tests/PDI.spec.ts
-
-      - name: PDI dry run (fill, no Save)
-        if: env.TASK == 'pdi-dry-run'
-        env:
-          PDI_DRY_RUN: '1'
         run: npx playwright test tests/PDI.spec.ts
 
       - name: Daily PDI email
