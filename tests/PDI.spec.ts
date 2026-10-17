@@ -130,8 +130,8 @@ const isSerial = (v: string) => !!v && !/\s/.test(v) && /\d/.test(v);
 // sheet's Battery and Motor columns were swapped and 41 chassis got Engine No and Battery the wrong way round.
 const VIN_COLUMNS: { key: keyof VinDetails | 'vin'; header: RegExp; label: string }[] = [
   { key: 'vin', header: /^(vin|chassis)/, label: 'VIN' },
-  { key: 'motor', header: /^(motor|engine)/, label: 'Motor No' },
-  { key: 'battery', header: /^battery/, label: 'Battery No' },
+  { key: 'motor', header: /^(motor|engine|min\b)/, label: 'Motor No' },   // MIN = Motor Identification No
+  { key: 'battery', header: /^(battery|bin\b)/, label: 'Battery No' },   // BIN = Battery Identification No
   { key: 'charger', header: /^charger/, label: 'Charger' },
 ];
 
