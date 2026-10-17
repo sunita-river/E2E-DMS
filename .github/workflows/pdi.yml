@@ -97,6 +97,19 @@ jobs:
           key: pdi-state-${{ github.run_id }}
           restore-keys: pdi-state-
 
+      # Runs made from a PC (npm run test:pdi) send their run files to the pdi-runs branch
+      # (scripts/pdiPushRuns.js); add any not seen yet so the daily file and email include them.
+      - name: Add PDI runs made from a PC
+        run: |
+          git fetch --depth=1 origin pdi-runs 2>/dev/null || { echo "No pdi-runs branch, no PC runs to add."; exit 0; }
+          mkdir -p "Output/PDI runs"
+          for f in $(git ls-tree --name-only FETCH_HEAD runs/); do
+            n=$(basename "$f")
+            [ -e "Output/PDI runs/$n" ] && continue
+            git show "FETCH_HEAD:$f" > "Output/PDI runs/$n"
+            echo "Added PC run $n"
+          done
+
       - name: PDI fill and Save
         if: env.TASK == 'pdi'
         run: npx playwright test tests/PDI.spec.ts
