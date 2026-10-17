@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { LoginPage, UserCredentials } from './models/LoginPage';
-import { writePdiDashboard, problemsOf, outcomeOf, FailedDealer, vinFilePath } from './utils/pdiReport';
+import { writePdiDashboard, problemsOf, splitProblems, outcomeOf, FailedDealer, vinFilePath } from './utils/pdiReport';
 import { writePdiWorkbook } from './utils/pdiWorkbook';
 import { buildPdiDaily, localDate, RUNS_DIR, OUTPUT_DIR } from './utils/pdiDaily';
 
@@ -620,7 +620,7 @@ test.describe('PDI', () => {
         `Add these VINs to the sheet, then rerun with PDI_DEALER=${dealersMissing.join(',')}`);
       noData.forEach((r) => console.log(`   ${r.Dealer} ${r.ChassisNo}: ${r.Status}`));
     }
-    const problems = problemsOf(results.filter((r) => outcomeOf(r) !== 'missing'), failures, DRY_RUN);
+    const problems = splitProblems(problemsOf(results.filter((r) => outcomeOf(r) !== 'missing'), failures, DRY_RUN));
     if (problems.length) {
       const rerun = [...new Set([...failedDealers, ...results.filter((r) => problems.some((p) => p.startsWith(`${r.Dealer} ${r.ChassisNo}:`))).map((r) => r.Dealer!)])];
       throw new Error(`${problems.length} problem(s). Rerun with PDI_DEALER=${rerun.join(',')}\n  ${problems.slice(0, 20).join('\n  ')}`);

@@ -581,6 +581,19 @@ export function problemsOf(results: ResultRow[], failed: FailedDealer[], dryRun:
   ];
 }
 
+// Problems a rerun can't fix and that need someone to act in the DMS or credentials.json: a dealer
+// whose login is wrong, or a chassis whose Save the DMS doesn't keep. They are listed in the report and
+// logged as warnings, but don't fail the run (otherwise every run is red until someone fixes them).
+// Anything else (timeouts, page errors) still fails it.
+export const isDataIssue = (problem: string) => /Login failed|Save clicked but values not kept/.test(problem);
+
+// Logs the data issues as warnings and returns only the problems that should fail the run.
+export function splitProblems(problems: string[]): string[] {
+  const data = problems.filter(isDataIssue);
+  if (data.length) console.log(`[WARN] ${data.length} issue(s) that need fixing in the DMS or credentials.json (listed in the report):\n  ${data.join('\n  ')}`);
+  return problems.filter((p) => !isDataIssue(p));
+}
+
 // Saves the interactive dashboard next to the Excel (same name, .html) and returns its HTML.
 export function writePdiDashboard(results: ResultRow[], failed: FailedDealer[], meta: ReportMeta, excelFile: string): string {
   const dashboard = buildDashboardHtml(summarize(results, meta, failed), results, meta);
