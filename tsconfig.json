@@ -26,6 +26,7 @@
   },
   "include": [
     "tests/**/*.ts",
+    "PDI Update/**/*.ts",
     "pages/**/*.ts",
     "models/**/*.ts",
     "resource/**/*",

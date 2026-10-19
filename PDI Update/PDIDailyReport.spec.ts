@@ -5,7 +5,7 @@ import { sendPdiReport, problemsOf, outcomeOf, splitProblems } from './utils/pdi
 import { buildPdiDaily, localDate, emailedMarker, OUTPUT_DIR, RUNS_DIR } from './utils/pdiDaily';
 
 // Daily PDI email: the one email of the day for PDI. It rebuilds Output/PDI_Daily_<day>.xlsx from every
-// PDI run saved that day (see tests/utils/pdiDaily.ts for the merging rules), refreshes PDI_Master.xlsx
+// PDI run saved that day (see utils/pdiDaily.ts for the merging rules), refreshes PDI_Master.xlsx
 // (Tracking sheet + last 3 days) and the all-time history, and emails the day's Excel and the master to
 // GMAIL_TO with PDI_CC. The HTML dashboards are saved in Output/, not emailed. No browser, no DMS login.
 // The PDI runs themselves send no email; run this once after the day's last PDI run.

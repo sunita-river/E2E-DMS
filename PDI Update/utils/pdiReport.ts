@@ -4,19 +4,22 @@ import * as path from 'node:path';
 import nodemailer from 'nodemailer';
 import type { PdiHistory } from './pdiHistory';
 
-// Per-dealer summary email + interactive HTML dashboard for tests/PDI.spec.ts.
+// Per-dealer summary email + interactive HTML dashboard for PDI.spec.ts.
 // Mail apps strip JavaScript, so the email body is a static (table-based, inline-styled)
 // summary; only Excel files are attached. The interactive dashboards are saved as .html in Output/.
 
-// The VIN Details workbook: PDI_VIN_FILE, else the newest resources/VIN*.xlsx or VIN*.csv, so a renamed or
+// The VIN Details workbook: PDI_VIN_FILE, else the newest "PDI Update"/VIN*.xlsx or VIN*.csv, so a renamed or
 // re-downloaded copy ("VIN.xlsx", "VIN Details (2).xlsx") or the VIN_Details.csv that the Google Sheet's
 // Apps Script sends to the vin-data branch (npm run pdi:vin) is picked up without changing anything.
 export function vinFilePath(): string {
   if (process.env.PDI_VIN_FILE) return process.env.PDI_VIN_FILE;
-  const dir = path.join(__dirname, '..', '..', 'resources');
-  const newest = (fs.existsSync(dir) ? fs.readdirSync(dir) : [])
-    .filter((f) => /^VIN.*\.(xlsx|csv)$/i.test(f) && !f.startsWith('~$')) // ~$ = Excel's lock file
-    .map((f) => path.join(dir, f))
+  // The "PDI Update" folder, and resources/ where the sheet used to live, so a copy dropped there
+  // out of habit isn't silently ignored; the newest file in either wins.
+  const dir = path.join(__dirname, '..');
+  const newest = [dir, path.join(dir, '..', 'resources')]
+    .flatMap((d) => (fs.existsSync(d) ? fs.readdirSync(d) : [])
+      .filter((f) => /^VIN.*\.(xlsx|csv)$/i.test(f) && !f.startsWith('~$')) // ~$ = Excel's lock file
+      .map((f) => path.join(d, f)))
     .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
   return newest ?? path.join(dir, 'VIN Details.xlsx');
 }

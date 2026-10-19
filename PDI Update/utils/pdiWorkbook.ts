@@ -3,7 +3,7 @@ import ExcelJS from 'exceljs';
 import { outcomeOf, ResultRow, FailedDealer } from './pdiReport';
 import type { PdiHistory } from './pdiHistory';
 
-// Formatted Excel for the PDI run (tests/PDI.spec.ts) and the daily summary (PDIDailyReport.spec.ts):
+// Formatted Excel for the PDI run (PDI.spec.ts) and the daily summary (PDIDailyReport.spec.ts):
 // a Summary sheet first, then one row per chassis, then (for a run) every dealer checked.
 // Columns carry friendly headers; readPdiRow() maps them back so saved files can be read again.
 

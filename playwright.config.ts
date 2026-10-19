@@ -7,7 +7,9 @@ import { defineConfig, devices } from '@playwright/test';
 const browserChannel = process.env.BROWSER_CHANNEL || 'chrome';
 
 export default defineConfig({
-  testDir: './tests',
+  // Specs live in tests/ and, for PDI, in "PDI Update/".
+  testDir: '.',
+  testMatch: /[\\/](tests|PDI Update)[\\/].*\.spec\.ts$/,
     fullyParallel: false,
   timeout:500000,
   // Hard cap for the whole run so a CI job can never hang forever (the GSTR test alone can

@@ -27,7 +27,9 @@ resources/credentials.json
 
 # Reference data for the PDI spec (VIN / battery / motor / charger numbers)
 resources/VIN*.xlsx
+/PDI Update/VIN*.xlsx
 resources/VIN*.csv
+/PDI Update/VIN*.csv
 
 # Local tooling
 .claude/

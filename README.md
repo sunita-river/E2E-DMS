@@ -6,7 +6,7 @@ End-to-end Playwright automation for **River DMS** (`rivermobility.gaindms.com`)
 |---|---|---|
 | `tests/enquiryListReport.spec.ts` | Dealer login → Enquiry List (full list, every row), then **Product-wise Sales Details** by Invoice date and by Booking date in the same session. Checks each report's columns, blanks and dates, counts dealers, and builds an Enquiry / Invoice / Booking summary by date and dealer (bookings counted once by Booking No) whose totals must match the reports | `Output/Enquiry_List_<from>_<to>.xlsx`, `Output/Enquiry_Summary_<from>_<to>.xlsx` (By Date, By Dealer, By Date and Dealer); the per-day table is pasted into the run email |
 | `tests/GSTR Report.spec.ts` | For every dealer in `credentials.json`: GSTR ProductWise Sales Details, plus the **Post GST Discount** read from each Product Sale invoice PDF | `Output/<dealer>_SalesGSTNReport_<from>_<to>.xlsx` and `MasterData_…xlsx`; anything not found in DMS (report gone from the menu, missing columns, bookings not invoiced, discounts not read, dealers not run) goes to `Output/GSTR_Missing_<from>_<to>.xlsx` (highlighted red) and a red "not found in DMS" section in the run email |
-| `tests/PDI.spec.ts` | For every PDI dealer (`PIDDealerCodes` / `PIDUsers`): finds **WORKSHOP → PDI** rows with a blank field and fills Engine / Battery / Charger from the VIN Details sheet in **Settings → Admin → Modify vehicle details** | one copy per day, `Output/PDI_Daily_<date>.xlsx` + dashboard, refreshed by every run (each run's own file goes to `Output/PDI runs/`); no email per run |
+| `PDI Update/PDI.spec.ts` | For every PDI dealer (`PIDDealerCodes` / `PIDUsers`): finds **WORKSHOP → PDI** rows with a blank field and fills Engine / Battery / Charger from the VIN Details sheet in **Settings → Admin → Modify vehicle details** | one copy per day, `Output/PDI_Daily_<date>.xlsx` + dashboard, refreshed by every run (each run's own file goes to `Output/PDI runs/`); no email per run |
 | `tests/Automation for Testing.spec.ts` | **Stage DMS only** (`credentials.stageUser`): River User login → create enquiry → follow-up → booking → ₹5,000 receipt, checking each step's fields and saved records. Each run leaves new records on stage | Playwright report only |
 | `ASM_Reportwise/asmwise_report.py` | River User login → Enquiry List and Booking Master Tracker Details for Yesterday, MTD and YTD. Counts enquiries, test rides (Home / Store / not taken), Booked-Active and Retail bookings per Dealer Code and ASM, in total and by lead source (Online, Walk-in, Telephone, Activation), with conversion %s and an All Dealers total. Runs daily at 09:00 and 19:00 IST on GitHub Actions (`.github/workflows/asmwise-report.yml`), which then sends the ASM emails; `ASM_Reportwise/run_asmwise_report.bat` does the same locally. Everything for this report lives in `ASM_Reportwise/` (see its README) | `ASM_Reportwise/Output/ASMwise_AllSources_Summary_<yesterday>.xlsx`; log in `ASM_Reportwise/Output/logs/asmwise_report.log` |
 | `ASM_Reportwise/asm_email.py` | Builds one email per ASM from the latest summary, matched by ASM name (regular expressions) to `ASM_Reportwise/Mapping/ASM_Name_Mapping.xlsx`. Sent daily at 09:00 and 19:00 IST by the same workflow. A preview by default; `-- --send` mails them through Gmail and `-- --only <address>` limits it to those ASMs | `ASM_Reportwise/Output/email_preview/<yesterday>/` |
@@ -32,7 +32,7 @@ cd E2E-DMS
 |---|---|---|
 | `resources/credentials.json` | `resources/credentials.example.json` | `dealervalidUser` (Enquiry List, MIS check), `dealerUsers` (one entry per dealer for GSTR) and, for PDI, `PIDLogin` (the shared login) with `PIDDealerCodes` (the dealer codes), plus `PIDUsers` for any dealer with its own login; `stageUser` for the Stage DMS spec; `riverUserValidUser` for the ASM-wise report |
 | `.env` | `.env.example` | `GMAIL_USER`, `GMAIL_APP_PASSWORD` (a [Gmail App Password](https://myaccount.google.com/apppasswords)), `GMAIL_TO`; optional `PDI_CC` |
-| `resources/VIN Details.xlsx` | `npm run pdi:vin` fetches the VIN Google Sheet's latest copy (`resources/VIN_Details.csv`, sent by its Apps Script, see CI/CD); or copy one in by hand (any `VIN….xlsx` / `VIN….csv` name works; the newest is used) | VIN sheet for PDI: columns found by their header in row 1 (VIN, Battery No, Motor No, Charger), in any order |
+| `PDI Update/VIN Details.xlsx` | `npm run pdi:vin` fetches the VIN Google Sheet's latest copy (`PDI Update/VIN_Details.csv`, sent by its Apps Script, see CI/CD); or copy one in by hand (any `VIN….xlsx` / `VIN….csv` name works; the newest is used) | VIN sheet for PDI: columns found by their header in row 1 (VIN, Battery No, Motor No, Charger), in any order |
 
 The ASM-wise report is Python (3.10+). Install its packages once with `pip install -r ASM_Reportwise/requirements.txt`.
 
@@ -109,7 +109,7 @@ All optional. See `.env.example`.
 | `PDI_LOAD_TIMEOUT_S` | PDI | Longest wait for Show / Save to reload the page (default 30) |
 | `PDI_DEALER` | PDI | Only these dealers, comma-separated (default: all PDI dealers) |
 | `PDI_DRY_RUN` | PDI | `1` = fill the form but don't Save (set by `test:pdi:dry`) |
-| `PDI_VIN_FILE` | PDI | VIN Details workbook or CSV (default: the newest `resources/VIN*.xlsx` / `VIN*.csv`) |
+| `PDI_VIN_FILE` | PDI | VIN Details workbook or CSV (default: the newest `PDI Update/VIN*.xlsx` / `VIN*.csv`) |
 | `PDI_CC` | PDI daily report | CC list for the daily PDI email |
 | `PDI_SEND_EMAIL` | PDI daily report | `0` = build the report but don't email it |
 | `PDI_FORCE_EMAIL` | PDI daily report | `1` = send again although today's email already went out |
@@ -156,11 +156,15 @@ The GitHub-hosted runner must be able to reach `rivermobility.gaindms.com`. If i
 tests/
   enquiryListReport.spec.ts     Enquiry List
   GSTR Report.spec.ts           GSTR ProductWise Sales + invoice-PDF discounts
-  PDI.spec.ts                   PDI blank Engine / Battery / Charger fill-up
-  PDIDailyReport.spec.ts        Combined daily PDI report
-  utils/pdiReport.ts            PDI report email + interactive dashboard
   models/                       Page objects (login, report viewer, report pages)
   reporters/gmail-reporter.ts   Emails the Playwright run result
+PDI Update/
+  PDI.spec.ts                   PDI blank Engine / Battery / Charger fill-up
+  PDIDailyReport.spec.ts        Combined daily PDI report
+  PDI_Update_InTransit.spec.ts  (empty, in progress)
+  utils/                        PDI report, daily merge, history, Excel workbook
+  scripts/pdiPushRuns.js        Sends this PC's PDI runs + history to the pdi-runs branch
+  scripts/pdiMergeHistory.js    Merges the PC's history into GitHub's (used by the workflow)
 run_mis_check.js                MIS report checker
 playwright.config.ts            Browser, timeouts, reporters
 resources/credentials.example.json
@@ -169,7 +173,7 @@ docs/Confluence.md              Team-facing overview, ready to paste into Conflu
 setup.ps1 / setup.bat           One-click setup (double-click setup.bat on a new PC)
 ```
 
-Kept out of Git (`.gitignore`): `.env`, `resources/credentials.json`, `resources/VIN*.xlsx`, `dms-profile/` (saved DMS login), `Output/` and `MIS Reports/` (contain customer data), `node_modules/`, and the test run results.
+Kept out of Git (`.gitignore`): `.env`, `resources/credentials.json`, `PDI Update/VIN*.xlsx`, `dms-profile/` (saved DMS login), `Output/` and `MIS Reports/` (contain customer data), `node_modules/`, and the test run results.
 
 ---
 

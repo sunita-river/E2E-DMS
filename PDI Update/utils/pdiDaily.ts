@@ -6,7 +6,7 @@ import { writePdiWorkbook, writePdiMaster, readPdiRow } from './pdiWorkbook';
 import { recordPdiHistory, PdiHistory } from './pdiHistory';
 
 // The day's single PDI copy: Output/PDI_Daily_<yyyy-mm-dd>.xlsx (+ .html dashboard), rebuilt by every
-// PDI run (tests/PDI.spec.ts) from that day's run files and emailed once by tests/PDIDailyReport.spec.ts.
+// PDI run (PDI.spec.ts) from that day's run files and emailed once by PDIDailyReport.spec.ts.
 //
 // Each run's own result file (PDI_BlankChassis_<time>.xlsx) goes to Output/PDI runs/, which is only
 // the input for this merge. Merging rules:

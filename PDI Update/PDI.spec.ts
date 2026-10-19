@@ -2,7 +2,7 @@ import { test, Page, Dialog } from '@playwright/test';
 import * as XLSX from 'xlsx';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { LoginPage, UserCredentials } from './models/LoginPage';
+import { LoginPage, UserCredentials } from '../tests/models/LoginPage';
 import { writePdiDashboard, problemsOf, splitProblems, outcomeOf, FailedDealer, vinFilePath } from './utils/pdiReport';
 import { writePdiWorkbook } from './utils/pdiWorkbook';
 import { buildPdiDaily, localDate, RUNS_DIR, OUTPUT_DIR } from './utils/pdiDaily';
@@ -15,7 +15,7 @@ import { buildPdiDaily, localDate, RUNS_DIR, OUTPUT_DIR } from './utils/pdiDaily
 //
 // Settings (all optional):
 //   PDI_DEALER    only these dealer codes, comma-separated, e.g. 332009,332008 (default: all PDI dealers)
-//   PDI_VIN_FILE  VIN Details workbook or CSV (default: the newest resources/VIN*.xlsx / VIN*.csv, e.g. the
+//   PDI_VIN_FILE  VIN Details workbook or CSV (default: the newest "PDI Update"/VIN*.xlsx / VIN*.csv, e.g. the
 //                 VIN_Details.csv that npm run pdi:vin fetches from the vin-data branch)
 //   PDI_DRY_RUN   1 = fill the form but don't click Save (for a first check)
 //   PDI_PARALLEL  dealers processed at once, each in its own browser window (default 3; 1 = one at a time)
