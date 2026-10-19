@@ -147,6 +147,34 @@ export class ReportViewerPage {
     return reportPage;
   }
 
+  // Saves the open report as Excel at `filePath` (extension taken from the DMS's file name).
+  // Over the display limit the viewer downloads it by itself (or via "click here"); otherwise
+  // "Export to Excel" is clicked. Returns the saved path.
+  async saveReportExcel(reportPage: Page, filePath: string): Promise<string> {
+    await reportPage.waitForLoadState('load').catch(() => {});
+    const overLimit = await reportPage.getByText(/record display limit/i).isVisible().catch(() => false);
+    let download: Download | null = null;
+    if (overLimit) {
+      download = await Promise.race([
+        autoDownloads.get(reportPage) ?? Promise.resolve(null),
+        reportPage.waitForTimeout(15000).then(() => null),
+      ]);
+      if (!download) {
+        console.log('[STEP] Automatic download did not start; clicking "click here"...');
+        const downloadPromise = reportPage.waitForEvent('download', { timeout: 120000 });
+        await reportPage.getByRole('link', { name: 'click here' }).click();
+        download = await downloadPromise;
+      }
+    } else {
+      download = await this.exportToExcel(reportPage);
+    }
+    const ext = path.extname(download.suggestedFilename()) || '.xls';
+    const target = filePath.replace(/\.xlsx?$/i, '') + ext;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    await download.saveAs(target);
+    return target;
+  }
+
   async openColumnSelector(reportPage: Page) {
     await reportPage.locator('section').filter({ hasText: 'Select the columns to be' }).click();
   }

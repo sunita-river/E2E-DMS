@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import ExcelJS from 'exceljs';
-import { outcomeOf, ResultRow, FailedDealer } from './pdiReport';
+import { outcomeOf, ResultRow, FailedDealer, InTransitSummary } from './pdiReport';
 import type { PdiHistory } from './pdiHistory';
 
 // Formatted Excel for the PDI run (PDI.spec.ts) and the daily summary (PDIDailyReport.spec.ts):
@@ -10,8 +10,10 @@ import type { PdiHistory } from './pdiHistory';
 const HEADERS: Record<string, string> = {
   Dealer: 'Dealer', ChassisNo: 'Chassis No', BlankFields: 'Was blank', EngineNo: 'Engine No',
   BatteryDetails: 'Battery', VehicleChargerNo: 'Charger', Status: 'Status',
-  DryRun: 'Dry run', BlankFound: 'Blank found', Result: 'Result',
+  DryRun: 'Dry run', BlankFound: 'Blank found', Result: 'Result', Day: 'Date', Before: 'Before update',
 };
+// The master's all-time In-Transit sheet.
+const IN_TRANSIT_KEYS = ['Day', 'Dealer', 'ChassisNo', 'EngineNo', 'BatteryDetails', 'VehicleChargerNo', 'Before', 'Status'];
 const KEY_OF = Object.fromEntries(Object.entries(HEADERS).map(([k, v]) => [v, k]));
 const CHASSIS_KEYS = ['Dealer', 'ChassisNo', 'BlankFields', 'EngineNo', 'BatteryDetails', 'VehicleChargerNo', 'Status'];
 const MONO = new Set(['ChassisNo', 'EngineNo', 'BatteryDetails', 'VehicleChargerNo']);
@@ -44,6 +46,7 @@ export interface PdiWorkbook {
   rows: ResultRow[];        // one per chassis
   rowsSheet: string;        // name of the chassis sheet (the daily report reads it by name)
   dealersSheet?: ResultRow[]; // run files only: one row per dealer checked
+  inTransit?: { rows: ResultRow[]; summary: InTransitSummary } | undefined; // daily file: the day's In-Transit vehicles
 }
 
 // A plain table: branded header, frozen, filterable, fitted column widths, light banding.
@@ -103,32 +106,49 @@ function addSummary(wb: ExcelJS.Workbook, book: PdiWorkbook) {
 
   const count = (o: string) => book.rows.filter((r) => outcomeOf(r) === o).length;
   const done = book.dryRun ? count('dryrun') : count('updated');
-  const tiles: [string, number, typeof TONES.good][] = [
-    ['Blank chassis found', book.rows.length, { fill: 'FFE9EEF6', font: BRAND }],
+  type Tile = [string, number, typeof TONES.good];
+  const NAVY = { fill: 'FFE9EEF6', font: BRAND };
+  // A section heading on `row`, then its tiles (value, label) on the two rows below, in A, B, D, E.
+  const section = (row: number, title: string, tiles: Tile[]) => {
+    ws.getCell(row, 1).value = title;
+    ws.getCell(row, 1).font = { bold: true, size: 12, color: { argb: BRAND } };
+    tiles.forEach(([label, value, tone], i) => {
+      const col = [1, 2, 4, 5][i]!; // C is skipped
+      const v = ws.getCell(row + 1, col);
+      const l = ws.getCell(row + 2, col);
+      v.value = value;
+      v.font = { bold: true, size: 18, color: { argb: tone.font } };
+      l.value = label;
+      l.font = { size: 9, color: { argb: INK2 } };
+      [v, l].forEach((c) => { c.fill = fill(tone.fill); c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; });
+    });
+    ws.getRow(row + 1).height = 30;
+    ws.getRow(row + 2).height = 26;
+  };
+  section(3, 'PDI', [
+    ['Blank chassis found', book.rows.length, NAVY],
     [book.dryRun ? 'Filled (dry run)' : 'Updated', done, book.dryRun ? TONES.info : TONES.good],
     ['No usable VIN data', count('missing'), TONES.warn],
     ['Errors', count('error') + book.failed.length, TONES.crit],
-  ];
-  tiles.forEach(([label, value, tone], i) => {
-    const col = [1, 2, 4, 5][i]!; // A, B, D, E; C is skipped
-    const v = ws.getCell(4, col);
-    const l = ws.getCell(5, col);
-    v.value = value;
-    v.font = { bold: true, size: 18, color: { argb: tone.font } };
-    l.value = label;
-    l.font = { size: 9, color: { argb: INK2 } };
-    [v, l].forEach((c) => { c.fill = fill(tone.fill); c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; });
-  });
-  ws.getRow(4).height = 30;
-  ws.getRow(5).height = 26;
+  ]);
+  const it = book.inTransit?.summary;
+  if (it) {
+    section(7, 'In-Transit', [
+      ['Total chassis found', it.found, NAVY],
+      ['In-Transit updated', it.updated, TONES.good],
+      ['No usable VIN data', it.missing, TONES.warn],
+      ['Errors', it.error, TONES.crit],
+    ]);
+  }
 
   // By dealer: only dealers with something to show; the rest share one line.
-  const head = ws.getRow(7);
+  const headRow = it ? 11 : 7;
+  const head = ws.getRow(headRow);
   head.values = ['Dealer', 'Blank', book.dryRun ? 'Filled' : 'Updated', 'No usable VIN data', 'Errors', 'Result'];
   head.height = 22;
   head.eachCell((c) => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = fill(BRAND); c.border = BORDER; c.alignment = { vertical: 'middle' }; });
 
-  let n = 8;
+  let n = headRow + 1;
   const clean: string[] = [];
   for (const dealer of book.dealers) {
     const mine = book.rows.filter((r) => r.Dealer === dealer);
@@ -229,10 +249,12 @@ function addHistory(wb: ExcelJS.Workbook, history: PdiHistory) {
 // PDI master: one sheet per date (named yyyy-mm-dd, newest first), each holding that day's rows from
 // its PDI_Daily copy. If the file is locked (open in Excel) it is left for the next run to rewrite,
 // not saved beside it, so there is only ever one master.
-export async function writePdiMaster(filePath: string, days: { day: string; rows: ResultRow[] }[], history?: PdiHistory): Promise<boolean> {
+// inTransit: every In-Transit chassis handled so far (latest result each, newest first), on its own sheet.
+export async function writePdiMaster(filePath: string, days: { day: string; rows: ResultRow[] }[], history?: PdiHistory, inTransit?: ResultRow[]): Promise<boolean> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'E2E DMS automation';
   if (history?.latest) addHistory(wb, history);
+  if (inTransit?.length) addTable(wb, 'In-Transit', IN_TRANSIT_KEYS, inTransit.map((r) => ({ ...r, Before: String(r.BlankFields ?? '').replace(/^Before:\s*/, '') })), 'Status');
   [...days].sort((a, b) => b.day.localeCompare(a.day)).forEach(({ day, rows }) => addTable(wb, day, CHASSIS_KEYS, rows, 'Status'));
   try {
     await wb.xlsx.writeFile(filePath);
@@ -250,6 +272,7 @@ export async function writePdiWorkbook(filePath: string, book: PdiWorkbook): Pro
   wb.creator = 'E2E DMS automation';
   addSummary(wb, book);
   addTable(wb, book.rowsSheet, CHASSIS_KEYS, book.rows, 'Status');
+  if (book.inTransit) addTable(wb, 'In-Transit', CHASSIS_KEYS, book.inTransit.rows, 'Status');
   if (book.dealersSheet) addTable(wb, 'Dealers', ['Dealer', 'DryRun', 'BlankFound', 'Result'], book.dealersSheet, 'Result');
   try {
     await wb.xlsx.writeFile(filePath);

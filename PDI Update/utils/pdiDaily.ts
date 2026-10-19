@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ResultRow, FailedDealer, ReportMeta, vinFilePath, writePdiMasterDashboard } from './pdiReport';
+import { ResultRow, FailedDealer, ReportMeta, vinFilePath, writePdiMasterDashboard, inTransitSummary } from './pdiReport';
 import { writePdiWorkbook, writePdiMaster, readPdiRow } from './pdiWorkbook';
 import { recordPdiHistory, PdiHistory } from './pdiHistory';
 
@@ -16,6 +16,32 @@ import { recordPdiHistory, PdiHistory } from './pdiHistory';
 //   - Dry-run runs are left out (nothing was saved).
 export const OUTPUT_DIR = process.env.GSTR_OUTPUT_DIR || path.join(process.cwd(), 'Output');
 export const RUNS_DIR = path.join(OUTPUT_DIR, 'PDI runs');
+// In-Transit runs (PDI_Update_InTransit.spec.ts): PDI_InTransit_<UTC yyyy-mm-dd-hh-mm>[_DRYRUN].xlsx, next to
+// the blank-chassis runs (so GitHub's state cache and npm run pdi:push-runs carry them) but counted apart:
+// they only feed the daily report's In-Transit KPIs and sheet, and the master's In-Transit sheet.
+export const IN_TRANSIT_DIR = RUNS_DIR;
+// Every In-Transit chassis ever handled, with its latest result, for the master's In-Transit sheet
+// (the run files are deleted after 3 days).
+export const IN_TRANSIT_HISTORY_FILE = path.join(OUTPUT_DIR, 'PDI_InTransit_History.json');
+
+// Adds the day's In-Transit rows (latest result per dealer + chassis) to the all-time list and returns it,
+// newest first. Each row carries Day = the date of its latest result.
+function recordInTransitHistory(day: string, rows: ResultRow[]): ResultRow[] {
+  let store: Record<string, ResultRow> = {};
+  try { store = JSON.parse(fs.readFileSync(IN_TRANSIT_HISTORY_FILE, 'utf8')); } catch { /* none yet */ }
+  for (const r of rows) {
+    const key = `${r.Dealer}|${r.ChassisNo}`;
+    // An older day's rebuild must not replace a newer result.
+    if (!store[key] || String(store[key]!.Day) <= day) store[key] = { ...r, Day: day };
+  }
+  try {
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    fs.writeFileSync(IN_TRANSIT_HISTORY_FILE, JSON.stringify(store));
+  } catch (err) {
+    console.log(`[WARN] Could not save the In-Transit history: ${String((err as Error).message).slice(0, 120)}`);
+  }
+  return Object.values(store).sort((a, b) => String(b.Day).localeCompare(String(a.Day)) || String(a.Dealer).localeCompare(String(b.Dealer)));
+}
 
 export const MASTER_FILE = path.join(OUTPUT_DIR, 'PDI_Master.xlsx');
 export const HISTORY_FILE = path.join(OUTPUT_DIR, 'PDI_History.json');
@@ -39,7 +65,7 @@ interface RunFile { file: string; savedAt: Date; rows: ResultRow[]; dealers: Res
 // PDI.spec.ts), not the file's modified time, so opening/re-saving a file doesn't reorder the runs.
 function runTimeOf(file: string): Date | null {
   // Older single-dealer runs were named <dealer>_PDI_BlankChassis_<stamp>.xlsx.
-  const m = path.basename(file).match(/PDI_BlankChassis_(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})/i);
+  const m = path.basename(file).match(/PDI_(?:BlankChassis|InTransit)_(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})/i);
   return m ? new Date(Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!)) : null;
 }
 
@@ -66,13 +92,31 @@ function readRunFiles(day: string): RunFile[] {
     });
 }
 
+// The day's real In-Transit runs, merged: latest result per dealer + chassis. Dry runs are left out.
+function readInTransitRuns(day: string): { rows: ResultRow[]; times: Date[] } {
+  const files = (fs.existsSync(IN_TRANSIT_DIR) ? fs.readdirSync(IN_TRANSIT_DIR) : [])
+    .filter((f) => /^PDI_InTransit_.*\.xlsx$/i.test(f) && !/_DRYRUN/i.test(f) && !f.startsWith('~$'))
+    .map((f) => ({ file: path.join(IN_TRANSIT_DIR, f), savedAt: runTimeOf(f) }))
+    .filter((r): r is { file: string; savedAt: Date } => !!r.savedAt && localDate(r.savedAt) === day)
+    .sort((a, b) => a.savedAt.getTime() - b.savedAt.getTime());
+  const latest = new Map<string, ResultRow>();
+  for (const { file } of files) {
+    const sheet = XLSX.readFile(file).Sheets['In-Transit'];
+    const rows = sheet ? XLSX.utils.sheet_to_json<ResultRow>(sheet, { raw: false, defval: '' }).map(readPdiRow) : [];
+    rows.filter((r) => !String(r.Status).startsWith('Dry run')).forEach((r) => latest.set(`${r.Dealer}|${r.ChassisNo}`, r));
+  }
+  if (files.length) console.log(`[STEP] ${files.length} In-Transit run(s) on ${day}: ${latest.size} vehicle(s)`);
+  return { rows: [...latest.values()], times: files.map((f) => f.savedAt) };
+}
+
 export interface PdiDay { file: string; results: ResultRow[]; failures: FailedDealer[]; meta: ReportMeta }
 
 // Merges the day's runs into Output/PDI_Daily_<day>.xlsx and returns what the report/email needs,
-// or null when there is no real (non-dry) run that day.
+// or null when there is no real (non-dry) PDI or In-Transit run that day.
 export async function buildPdiDaily(day: string): Promise<PdiDay | null> {
   const runs = readRunFiles(day);
-  if (!runs.length) return null;
+  const inTransit = readInTransitRuns(day);
+  if (!runs.length && !inTransit.rows.length) return null;
   console.log(`[STEP] ${runs.length} PDI run(s) on ${day}:`);
   runs.forEach((r) => console.log(`   ${path.basename(r.file)}  (${r.rows.length} chassis${r.dealers ? `, ${r.dealers.length} dealer(s) checked` : ''})`));
 
@@ -121,10 +165,13 @@ export async function buildPdiDaily(day: string): Promise<PdiDay | null> {
   }
 
   const title = `PDI daily summary · ${day} · ${runs.length} run(s)`;
+  const itSummary = inTransit.rows.length ? inTransitSummary(inTransit.rows) : undefined;
   const file = await writePdiWorkbook(dailyPath, {
     title, subtitle: `${dealerOrder.length} dealer(s) · latest result per chassis across the day's runs`,
     dryRun: false, dealers: dealerOrder, failed: failures, rows: results, rowsSheet: 'PDI Daily',
+    inTransit: itSummary && { rows: inTransit.rows, summary: itSummary },
   });
+  if (itSummary) console.log(`[STEP] In-Transit: ${itSummary.updated} of ${itSummary.found} updated (${itSummary.missing} no usable VIN data, ${itSummary.error} error(s))`);
   console.log(`[STEP] Combined ${results.length} chassis across ${dealerOrder.length} dealer(s) into ${file}`);
 
   const withoutDealerList = runs.filter((r) => !r.dealers).length;
@@ -133,14 +180,18 @@ export async function buildPdiDaily(day: string): Promise<PdiDay | null> {
   }
 
   deleteOldPdiFiles();
-  const history = await refreshPdiMaster();
+  const inTransitAll = recordInTransitHistory(day, inTransit.rows);
+  const history = await refreshPdiMaster(inTransitAll);
 
+  const times = [...runs.map((r) => r.savedAt), ...inTransit.times].sort((a, b) => a.getTime() - b.getTime());
   return {
     file, results, failures,
     meta: {
       dryRun: false,
-      startedAt: runs[0]!.savedAt,
-      finishedAt: runs[runs.length - 1]!.savedAt,
+      startedAt: times[0]!,
+      finishedAt: times[times.length - 1]!,
+      inTransit: itSummary,
+      inTransitRows: inTransit.rows,
       dealers: dealerOrder,
       vinFile: vinFilePath(),
       title,
@@ -149,15 +200,16 @@ export async function buildPdiDaily(day: string): Promise<PdiDay | null> {
   };
 }
 
-// Deletes PDI files dated before the oldest kept day: run files and email markers in Output/PDI runs/, and the
+// Deletes PDI files dated before the oldest kept day: run files (blank-chassis and In-Transit) and email markers
+// in Output/PDI runs/, and the
 // PDI_Daily_<date> copies in Output/. Only PDI files are touched; GSTR and other outputs stay.
 function deleteOldPdiFiles() {
   const oldest = keptDays()[KEEP_DAYS - 1]!;
   const dayOf = (f: string) => runTimeOf(f) ? localDate(runTimeOf(f)!) : f.match(/^(?:PDI_Daily|emailed)_(\d{4}-\d{2}-\d{2})/i)?.[1];
-  const old = [RUNS_DIR, OUTPUT_DIR]
+  const old = [...new Set([RUNS_DIR, OUTPUT_DIR, IN_TRANSIT_DIR])]
     .filter((dir) => fs.existsSync(dir))
     .flatMap((dir) => fs.readdirSync(dir)
-      .filter((f) => /^((\w+_)?PDI_BlankChassis_|PDI_Daily_|emailed_)/i.test(f) && /\.(xlsx|html|txt)$/i.test(f))
+      .filter((f) => /^((\w+_)?PDI_BlankChassis_|PDI_InTransit_|PDI_Daily_|emailed_)/i.test(f) && /\.(xlsx|html|txt)$/i.test(f))
       .filter((f) => { const d = dayOf(f); return !!d && d < oldest; })
       .map((f) => path.join(dir, f)));
   let deleted = 0;
@@ -175,7 +227,7 @@ function deleteOldPdiFiles() {
 //
 // Every day that has a PDI_Daily file is also saved into Output/PDI_History.json, which keeps all days
 // (see pdiHistory.ts); the master's Tracking sheet and the email show totals from it.
-async function refreshPdiMaster(): Promise<PdiHistory> {
+async function refreshPdiMaster(inTransitAll: ResultRow[]): Promise<PdiHistory> {
   const sheetRows = (file: string, name: string) => {
     const sheet = XLSX.readFile(file).Sheets[name];
     return sheet ? XLSX.utils.sheet_to_json<ResultRow>(sheet, { raw: false, defval: '' }).map(readPdiRow) : null;
@@ -200,7 +252,7 @@ async function refreshPdiMaster(): Promise<PdiHistory> {
     })
     .filter((d): d is { day: string; rows: ResultRow[] } => !!d);
   const history = recordPdiHistory(HISTORY_FILE, fromDaily);
-  if (days.length && await writePdiMaster(MASTER_FILE, days, history)) {
+  if ((days.length || inTransitAll.length) && await writePdiMaster(MASTER_FILE, days, history, inTransitAll)) {
     console.log(`[STEP] PDI master updated: ${MASTER_FILE} (${days.map((d) => `${d.day}: ${d.rows.length} chassis`).join(', ')})`);
     writePdiMasterDashboard(days, MASTER_FILE);
   }

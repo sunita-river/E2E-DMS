@@ -1,4 +1,4 @@
-// Sends this PC's PDI run files (Output/PDI runs/PDI_BlankChassis_*.xlsx) to the pdi-runs branch on
+// Sends this PC's PDI run files (Output/PDI runs/PDI_BlankChassis_*.xlsx and PDI_InTransit_*.xlsx) to the pdi-runs branch on
 // GitHub, so the GitHub PDI workflow (.github/workflows/pdi.yml) merges them into its daily file,
 // history and 19:00 email along with its own hourly runs.
 //
@@ -21,8 +21,9 @@ function runFiles() {
   if (!fs.existsSync(RUNS_DIR)) return [];
   const oldest = new Date(Date.now() - KEEP_DAYS * 24 * 3600 * 1000).toISOString().slice(0, 10);
   return fs.readdirSync(RUNS_DIR)
-    .filter((f) => /^PDI_BlankChassis_(\d{4}-\d{2}-\d{2})-.*\.xlsx$/i.test(f) && !f.startsWith('~$'))
-    .filter((f) => f.slice('PDI_BlankChassis_'.length, 'PDI_BlankChassis_'.length + 10) >= oldest);
+    // In-Transit runs too (dry runs stay on the PC: nothing was saved).
+    .filter((f) => /^PDI_(BlankChassis|InTransit)_(\d{4}-\d{2}-\d{2})-.*\.xlsx$/i.test(f) && !/_DRYRUN/i.test(f) && !f.startsWith('~$'))
+    .filter((f) => f.match(/_(\d{4}-\d{2}-\d{2})-/)[1] >= oldest);
 }
 
 function main() {

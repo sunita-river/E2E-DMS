@@ -12,6 +12,8 @@
     "test:stage": "playwright test \"tests/Automation for Testing.spec.ts\"",
     "test:pdi:dry": "set PDI_RUN=1&& set PDI_DRY_RUN=1&& playwright test \"PDI Update/PDI.spec.ts\" --headed",
     "test:pdi": "set PDI_RUN=1&& set PDI_DRY_RUN=&& playwright test \"PDI Update/PDI.spec.ts\" --headed & node \"PDI Update/scripts/pdiPushRuns.js\"",
+    "test:pdi:intransit:dry": "set PDI_RUN=1&& set PDI_DRY_RUN=1&& playwright test \"PDI Update/PDI_Update_InTransit.spec.ts\" --headed",
+    "test:pdi:intransit": "set PDI_RUN=1&& set PDI_DRY_RUN=&& playwright test \"PDI Update/PDI_Update_InTransit.spec.ts\" --headed",
     "pdi:push-runs": "node \"PDI Update/scripts/pdiPushRuns.js\"",
     "pdi:vin": "git fetch origin vin-data && git show FETCH_HEAD:VIN_Details.csv > \"PDI Update/VIN_Details.csv\"",
     "report:pdi-daily": "set PDI_RUN=1&& playwright test \"PDI Update/PDIDailyReport.spec.ts\" --reporter=line",

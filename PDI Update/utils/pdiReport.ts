@@ -26,8 +26,10 @@ export function vinFilePath(): string {
 
 export type ResultRow = Record<string, string>;
 export interface FailedDealer { dealer: string; error: string }
+// The day's In-Transit vehicles (PDI_Update_InTransit.spec.ts), counted apart from the blank PDI chassis.
+export interface InTransitSummary { found: number; updated: number; missing: number; error: number }
 // title labels the report (default: "PDI vehicle details").
-export interface ReportMeta { dryRun: boolean; startedAt: Date; finishedAt: Date; dealers: string[]; vinFile: string; title?: string; history?: PdiHistory }
+export interface ReportMeta { dryRun: boolean; startedAt: Date; finishedAt: Date; dealers: string[]; vinFile: string; title?: string; history?: PdiHistory; inTransit?: InTransitSummary | undefined; inTransitRows?: ResultRow[] | undefined }
 const titleOf = (m: ReportMeta) => m.title || 'PDI vehicle details';
 
 type Outcome = 'updated' | 'dryrun' | 'missing' | 'error';
@@ -44,6 +46,11 @@ export function outcomeOf(row: ResultRow): Outcome {
   if (s.startsWith('Dry run')) return 'dryrun';
   if (s.startsWith('Not in VIN') || s.startsWith('VIN sheet has no usable')) return 'missing';
   return 'error';
+}
+
+export function inTransitSummary(rows: ResultRow[]): InTransitSummary {
+  const count = (o: Outcome) => rows.filter((r) => outcomeOf(r) === o).length;
+  return { found: rows.length, updated: count('updated'), missing: count('missing'), error: count('error') + count('dryrun') };
 }
 
 interface DealerSummary { dealer: string; failed?: string | undefined; total: number; counts: Record<Outcome, number> }
@@ -110,6 +117,13 @@ function historyHtml(history: PdiHistory | undefined, font: string, tile: (v: nu
       </div>`;
 }
 
+// "71 of 79 chassis updated": the blank PDI chassis plus the day's In-Transit vehicles, when there are any.
+function headline(done: number, blank: number, meta: ReportMeta): string {
+  const it = meta.inTransit;
+  if (!it) return `${done} of ${blank} blank chassis ${meta.dryRun ? 'filled' : 'updated'}`;
+  return `${done + it.updated} of ${blank + it.found} chassis ${meta.dryRun ? 'filled' : 'updated'}`;
+}
+
 function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: ReportMeta, masterAttached = false): string {
   const t = totals(summary);
   const font = "font-family:'Segoe UI',Roboto,Arial,sans-serif;";
@@ -145,7 +159,11 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
       </tr>`;
   }).join('');
 
-  const problems = results.filter((r) => ['missing', 'error'].includes(outcomeOf(r)));
+  // In-Transit problems are listed too, marked "In-Transit:" so they aren't taken for blank PDI chassis.
+  const problems = [
+    ...results.filter((r) => ['missing', 'error'].includes(outcomeOf(r))),
+    ...(meta.inTransitRows ?? []).filter((r) => ['missing', 'error'].includes(outcomeOf(r))).map((r) => ({ ...r, Status: `In-Transit: ${r.Status}` })),
+  ];
   const failedDealers = summary.filter((s) => s.failed);
   const problemRows = [
     ...failedDealers.map((s) => `<tr><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;">${esc(s.dealer)}</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;">-</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;color:#d03b3b;">Dealer failed: ${esc(s.failed)}</td></tr>`),
@@ -161,7 +179,7 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
          ${problemRows}
        </table>
        ${problems.length > 50 ? `<p style="${font}font-size:12px;color:#52514e;">...and ${problems.length - 50} more; see the attached Excel.</p>` : ''}`
-    : `<p style="${font}font-size:14px;color:#0ca30c;margin:24px 0 0;">No errors: every blank chassis was ${meta.dryRun ? 'filled' : 'updated'}.</p>`;
+    : `<p style="${font}font-size:14px;color:#0ca30c;margin:24px 0 0;">No errors: every ${meta.inTransit ? 'blank and In-Transit ' : 'blank '}chassis was ${meta.dryRun ? 'filled' : 'updated'}.</p>`;
 
   const doneLabel = meta.dryRun ? 'Filled (dry run)' : 'Updated';
   const doneValue = meta.dryRun ? t.dryrun : t.updated;
@@ -170,16 +188,26 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
   <table width="680" cellpadding="0" cellspacing="0" style="max-width:680px;width:100%;">
     <tr><td style="${font}background:#16325c;color:#ffffff;border-radius:12px 12px 0 0;padding:20px 22px;">
       <div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;opacity:.75;">River DMS · ${esc(titleOf(meta))}</div>
-      <div style="font-size:22px;font-weight:700;margin-top:4px;">${doneValue} of ${t.blank} blank chassis ${meta.dryRun ? 'filled' : 'updated'}</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px;">${headline(doneValue, t.blank, meta)}</div>
+      ${meta.inTransit ? `<div style="font-size:13px;opacity:.85;margin-top:4px;">PDI blank ${doneValue}/${t.blank} · In-Transit ${meta.inTransit.updated}/${meta.inTransit.found}</div>` : ''}
       <div style="font-size:13px;opacity:.85;margin-top:6px;">${meta.dryRun ? '<b style="background:#2a78d6;padding:2px 8px;border-radius:10px;">DRY RUN, nothing saved</b> · ' : ''}${esc(fmtTime(meta.finishedAt))} · ${minutes(meta)} min · ${t.dealers} dealer(s)</div>
     </td></tr>
     <tr><td style="background:#fcfcfb;padding:12px 16px 22px;border-radius:0 0 12px 12px;">
+      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:8px 0 4px;">PDI</h3>
       <table width="100%" cellpadding="0" cellspacing="0"><tr>
         ${tile(t.blank, 'Blank chassis found', '#16325c')}
         ${tile(doneValue, doneLabel, meta.dryRun ? '#2a78d6' : '#0ca30c')}
         ${tile(t.missing, 'No usable VIN data', '#fab219')}
         ${tile(t.error + t.failedDealers, 'Errors', '#d03b3b')}
       </tr></table>
+      ${meta.inTransit ? `
+      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 4px;">In-Transit</h3>
+      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+        ${tile(meta.inTransit.found, 'Total chassis found', '#16325c')}
+        ${tile(meta.inTransit.updated, 'In-Transit updated', '#0ca30c')}
+        ${tile(meta.inTransit.missing, 'No usable VIN data', '#fab219')}
+        ${tile(meta.inTransit.error, 'Errors', '#d03b3b')}
+      </tr></table>` : ''}
       ${historyHtml(meta.history, font, tile)}
       <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 8px;">By dealer</h3>
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e3de;border-radius:10px;border-collapse:separate;">
@@ -209,6 +237,7 @@ h1{margin:2px 0 4px;font-size:24px}
 .sub{color:var(--ink2);font-size:13px}
 .badge{display:inline-block;background:var(--info);color:#fff;border-radius:10px;padding:1px 9px;font-size:12px;font-weight:600;margin-right:6px}
 button.theme{background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 10px;cursor:pointer}
+h2.sect{font-size:15px;margin:4px 0 8px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:18px}
 .tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;border-top:4px solid var(--accent)}
 .tile .v{font-size:30px;font-weight:700}
@@ -249,7 +278,7 @@ td.mono{font-family:Consolas,'Cascadia Mono',monospace;font-size:12px}
 
 function buildDashboardHtml(summary: DealerSummary[], results: ResultRow[], meta: ReportMeta): string {
   const data = {
-    meta: { dryRun: meta.dryRun, finished: fmtTime(meta.finishedAt), minutes: minutes(meta), vinFile: path.basename(meta.vinFile) },
+    meta: { dryRun: meta.dryRun, finished: fmtTime(meta.finishedAt), minutes: minutes(meta), vinFile: path.basename(meta.vinFile), inTransit: meta.inTransit ?? null },
     outcomes: OUTCOMES,
     dealers: summary.map((s) => ({ dealer: s.dealer, failed: s.failed || '', total: s.total, counts: s.counts })),
     rows: results.map((r) => ({ dealer: r.Dealer, chassis: r.ChassisNo, blank: r.BlankFields, engine: r.EngineNo, battery: r.BatteryDetails, charger: r.VehicleChargerNo, status: r.Status, outcome: outcomeOf(r) })),
@@ -267,7 +296,10 @@ ${DASH_CSS}</style></head>
   <div><div class="eyebrow">River DMS · ${esc(titleOf(meta))}</div><h1 id="headline"></h1><div class="sub" id="sub"></div></div>
   <button class="theme" id="theme" type="button" aria-label="Toggle dark mode">Theme</button>
 </header>
+<h2 class="sect">PDI</h2>
 <section class="tiles" id="tiles"></section>
+<h2 class="sect" id="itHead" hidden>In-Transit</h2>
+<section class="tiles" id="itTiles" hidden></section>
 <section class="card errbox" id="dealerErrors" hidden><h2>Dealers that failed</h2><ul id="dealerErrList"></ul></section>
 <section class="card">
   <h2>Outcome by dealer</h2><div class="hint">Click a dealer to filter the table below. Hover a segment for its count.</div>
@@ -305,8 +337,12 @@ const failedDealers = D.dealers.filter((d) => d.failed);
 const done = D.meta.dryRun ? sum('dryrun') : sum('updated');
 const pct = (n) => total ? Math.round((n / total) * 100) + '%' : '-';
 
-$('headline').textContent = done + ' of ' + total + ' blank chassis ' + (D.meta.dryRun ? 'filled' : 'updated');
+const ITm = D.meta.inTransit;
+$('headline').textContent = ITm
+  ? (done + ITm.updated) + ' of ' + (total + ITm.found) + ' chassis ' + (D.meta.dryRun ? 'filled' : 'updated')
+  : done + ' of ' + total + ' blank chassis ' + (D.meta.dryRun ? 'filled' : 'updated');
 $('sub').innerHTML = (D.meta.dryRun ? '<span class="badge">DRY RUN, nothing saved</span>' : '') +
+  (ITm ? 'PDI blank ' + done + '/' + total + ' · In-Transit ' + ITm.updated + '/' + ITm.found + ' · ' : '') +
   esc(D.meta.finished) + ' · ' + D.meta.minutes + ' min · ' + D.dealers.length + ' dealer(s)';
 
 const tiles = [
@@ -315,7 +351,20 @@ const tiles = [
   { v: sum('missing'), l: 'No usable VIN data', a: 'var(--warn)', p: pct(sum('missing')) + ' of blank' },
   { v: sum('error') + failedDealers.length, l: 'Errors', a: 'var(--crit)', p: sum('error') + ' chassis · ' + failedDealers.length + ' dealer(s)' },
 ];
-$('tiles').innerHTML = tiles.map((t) => '<div class="tile" style="--accent:' + t.a + '"><div class="v">' + t.v + '</div><div class="l">' + esc(t.l) + '</div><div class="p">' + esc(t.p) + '</div></div>').join('');
+const tileHtml = (list) => list.map((t) => '<div class="tile" style="--accent:' + t.a + '"><div class="v">' + t.v + '</div><div class="l">' + esc(t.l) + '</div><div class="p">' + esc(t.p) + '</div></div>').join('');
+$('tiles').innerHTML = tileHtml(tiles);
+const IT = D.meta.inTransit;
+if (IT) {
+  const itPct = (n) => IT.found ? Math.round((n / IT.found) * 100) + '% of In-Transit' : '-';
+  $('itHead').hidden = false;
+  $('itTiles').hidden = false;
+  $('itTiles').innerHTML = tileHtml([
+    { v: IT.found, l: 'Total chassis found', a: 'var(--brand)', p: 'In-Transit vehicles to update' },
+    { v: IT.updated, l: 'In-Transit updated', a: 'var(--good)', p: itPct(IT.updated) },
+    { v: IT.missing, l: 'No usable VIN data', a: 'var(--warn)', p: itPct(IT.missing) },
+    { v: IT.error, l: 'Errors', a: 'var(--crit)', p: itPct(IT.error) },
+  ]);
+}
 
 if (failedDealers.length) {
   $('dealerErrors').hidden = false;
@@ -622,7 +671,10 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
   }
   // Sent whether or not the run fully passed: problems are listed under "Needs attention" and
   // flagged in the subject.
-  const problems = problemsOf(results, failed, meta.dryRun);
+  const problems = [
+    ...problemsOf(results, failed, meta.dryRun),
+    ...problemsOf(meta.inTransitRows ?? [], [], meta.dryRun),
+  ];
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
   const to = process.env.GMAIL_TO || user;
@@ -633,7 +685,10 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
 
   const t = totals(summary);
   const done = meta.dryRun ? t.dryrun : t.updated;
-  let subject = `${meta.title ? meta.title + ' - ' : 'PDI details '}${meta.dryRun ? '[DRY RUN] filled' : 'updated'}: ${done}/${t.blank} across ${t.dealers} dealer(s)` +
+  const it = meta.inTransit;
+  let subject = `${meta.title ? meta.title + ' - ' : 'PDI details '}${meta.dryRun ? '[DRY RUN] filled' : 'updated'}: ` +
+    (it ? `${done + it.updated}/${t.blank + it.found} (PDI blank ${done}/${t.blank}, In-Transit ${it.updated}/${it.found})` : `${done}/${t.blank}`) +
+    ` across ${t.dealers} dealer(s)` +
     `${problems.length ? ` - ${problems.length} need attention` : ''} - ${meta.finishedAt.toISOString().slice(0, 10)}`;
   // PDI_CC (the PDI audience) only on real runs; a dry run goes to GMAIL_TO alone. PDI_EMAIL_REVIEW=1
   // also sends to GMAIL_TO alone, marked [REVIEW], so the owner can check it before it goes to everyone.
