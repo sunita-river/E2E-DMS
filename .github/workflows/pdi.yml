@@ -24,10 +24,16 @@ on:
         default: ''
 
 # One PDI job at a time: an hourly run still going makes the next one wait instead of overlapping,
-# and each job sees the state the previous one saved.
+# and each job sees the state the previous one saved. GitHub keeps only one waiting run per group,
+# so the daily email has its own group (else it would cancel a waiting hourly run) and instead waits
+# itself for any PDI run still going or queued (first step below).
 concurrency:
-  group: pdi
+  group: ${{ (github.event.inputs.task == 'daily-email' || github.event.schedule == '30 13 * * *') && 'pdi-email' || 'pdi' }}
   cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read     # the daily email's wait for other PDI runs
 
 jobs:
   pdi:
@@ -46,6 +52,21 @@ jobs:
       PDI_CC: ${{ secrets.PDI_CC }}
       TASK: ${{ github.event.inputs.task || (github.event.schedule == '30 13 * * *' && 'daily-email') || 'pdi' }}
     steps:
+      # The email must include the day's last hourly run, so wait (up to 130 min) for PDI runs still going or queued.
+      - name: Wait for PDI runs still going
+        if: env.TASK == 'daily-email'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 26); do
+            busy=$(gh run list -R "$GITHUB_REPOSITORY" --workflow pdi.yml --limit 20 --json databaseId,status \
+              --jq "[.[] | select(.databaseId != $GITHUB_RUN_ID and (.status | test(\"in_progress|queued|pending|waiting|requested\")))] | length")
+            [ "$busy" = "0" ] && { echo "No other PDI run going."; exit 0; }
+            echo "$busy PDI run(s) still going or queued, checking again in 5 min."
+            sleep 300
+          done
+          echo "::warning::PDI runs still going after 130 min; sending the email with what is saved so far."
+
       - name: Check the DMS can be reached from GitHub
         if: env.TASK != 'daily-email'
         run: |
