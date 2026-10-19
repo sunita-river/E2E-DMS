@@ -451,7 +451,16 @@ async function processDealer(page: Page, dealer: UserCredentials, vinDetails: Ma
 
     lastDialog = '';
     await postBack('#ctl00_cpMain_cmdSave');
-    const saveMessage = lastDialog;
+    // The DMS can refuse a Save without an alert(), only showing a message on the page (e.g. a serial
+    // already used on another vehicle), so pick up any visible message/error text as well.
+    const pageMessage = await page.evaluate(() => {
+      const texts = [...document.querySelectorAll<HTMLElement>('[id*="lbl" i], [id*="msg" i], [id*="message" i], [id*="error" i], [id*="valid" i], [class*="error" i], [class*="alert" i]')]
+        .filter((el) => el.offsetParent !== null && !el.querySelector('input, select, textarea'))
+        .map((el) => (el.innerText || '').replace(/\s+/g, ' ').trim())
+        .filter((t) => t.length > 3 && t.length < 300 && /(exist|already|duplicate|invalid|error|not|fail|must|required|success|saved|updated)/i.test(t));
+      return [...new Set(texts)].join(' | ');
+    }).catch(() => '');
+    const saveMessage = [lastDialog, pageMessage].filter(Boolean).join(' | ');
 
     // Re-open the vehicle to check the DMS actually kept the new values.
     await showVehicle(chassis);
