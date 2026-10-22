@@ -304,7 +304,10 @@ test.describe('PDI', () => {
           const done = mine.filter((r) => /^(Updated|Dry run)/.test(r.Status || '')).length;
           console.log(`[STEP] ===== Dealer ${code} (${position}) done: ${mine.length} blank, ${done} ${DRY_RUN ? 'filled' : 'updated'} =====`);
         } catch (err) {
-          const message = String((err as Error).message).split('\n')[0]!.slice(0, 200);
+          // Keep Playwright's "waiting for <locator>" line so a timeout says which element it was.
+          const lines = String((err as Error).message).split('\n');
+          const waitingFor = lines.find((l) => /^\s*- waiting for /.test(l))?.trim().replace(/^- /, '');
+          const message = (lines[0]! + (waitingFor ? ` (${waitingFor})` : '')).slice(0, 300);
           failedDealers.push(code);
           failures.push({ dealer: code, error: message });
           log(`[ERROR] Dealer failed: ${message}`);
