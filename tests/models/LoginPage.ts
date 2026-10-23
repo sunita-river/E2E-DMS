@@ -108,8 +108,14 @@ export class LoginPage {
       await this.page.locator('#ctl00_cpMain_DashboardCaption').waitFor({ state: 'visible', timeout: 30000 });
     } catch {
       const onLogin = await this.page.getByRole('button', { name: 'Sign In' }).isVisible().catch(() => false);
+      // The DMS shows why under the Sign In button, e.g. "You do not have permission for the selected
+      // branch" when the user has no access to that dealer, which no credentials.json change can fix.
+      const dmsMessage = onLogin
+        ? ((await this.page.getByText(/permission|invalid|incorrect|locked|not active|expired/i).first()
+            .innerText({ timeout: 2000 }).catch(() => '')).replace(/\s+/g, ' ').trim())
+        : '';
       throw new Error(onLogin
-        ? 'Login failed: still on the login page after Sign In (check the credentials in credentials.json).'
+        ? `Login failed: still on the login page after Sign In (${dmsMessage ? `DMS says "${dmsMessage}"` : 'check the credentials in credentials.json'}).`
         : `Dashboard did not load within 30s after login (page: ${this.page.url()}).`);
     }
 

@@ -160,7 +160,7 @@ PDI negative cases tested include: a missing or placeholder login, an unknown de
 |---|---|
 | `running scripts is disabled on this system` | Use `npm.cmd` / `npx.cmd`, or run once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
 | `still has the <user>/<password> placeholders` | Put the dealer's real login in `resources/credentials.json` |
-| `Login failed: still on the login page` | Check that dealer's login in `resources/credentials.json` |
+| `Login failed: still on the login page` | Check that dealer's login in `resources/credentials.json`. If it says `DMS says "You do not have permission for the selected branch"`, the login has no access to that dealer: ask the DMS admin to grant it |
 | `Not in VIN Details sheet` | The chassis isn't in the VIN sheet; get an updated sheet and run that dealer again |
 | `VIN sheet has no usable …` | The VIN sheet has a note instead of a serial number (e.g. "CHARGER NOT ASSIGNED YET", "CONTACT FACTORY TEAM"). That field is left untouched in the DMS; ask the factory team for the number, then run that dealer again |
 | `Save clicked but values not kept — …` | The DMS didn't keep a value (often a battery / motor / charger number already on another vehicle). The message shows what the DMS has; check that vehicle by hand |
