@@ -15,8 +15,8 @@ import { loadVinDetails as loadVinSheet, updateVehicles, VinDetails, ResultRow, 
 //
 // Settings (all optional):
 //   PDI_DEALER    only these dealer codes, comma-separated, e.g. 332009,332008 (default: all PDI dealers)
-//   PDI_VIN_FILE  VIN Details workbook or CSV (default: the newest "PDI Update"/VIN*.xlsx / VIN*.csv, e.g. the
-//                 VIN_Details.csv that npm run pdi:vin fetches from the vin-data branch)
+//   PDI_VIN_FILE  VIN Details workbook or CSV (default: resources/VIN_Details.csv, the "VIN BIN Update (Sunitha)"
+//                 Google Sheet, which npm run pdi:vin fetches from the vin-data branch before each npm run test:pdi*)
 //   PDI_DRY_RUN   1 = fill the form but don't click Save (for a first check)
 //   PDI_PARALLEL  dealers processed at once, each in its own browser window (default 3; 1 = one at a time)
 //   PDI_LOAD_TIMEOUT_S  longest wait for Show / Save to reload the page (default 30)

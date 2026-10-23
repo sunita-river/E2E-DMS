@@ -6,13 +6,13 @@ import { LoginPage, UserCredentials } from '../tests/models/LoginPage';
 import { ReportViewerPage } from '../tests/models/ReportViewerPage';
 import { vinFilePath, FailedDealer, writePdiDashboard, outcomeOf, problemsOf, splitProblems } from './utils/pdiReport';
 import { writePdiWorkbook } from './utils/pdiWorkbook';
-import { IN_TRANSIT_DIR, buildPdiDaily, localDate } from './utils/pdiDaily';
+import { IN_TRANSIT_DIR, OUTPUT_DIR, buildPdiDaily, localDate } from './utils/pdiDaily';
 import { loadVinDetails, updateVehicles, ResultRow, Log } from './utils/pdiVehicle';
 
 // Vehicle details from Inventory Stock Details, all in one River User session (riverUserValidUser in
 // credentials.json), no dealer logins:
 //   1. Log in as River User, then MIS -> MFR Vehicles Reports -> Stock -> Inventory Stock Details -> View Report,
-//      saved as Excel in "PDI Update/Downloads/InventoryStockDetails_RiverUser_<date>.xlsx". It lists every
+//      saved as Excel in "Output/Downloads/PDI/InventoryStockDetails_RiverUser_<date>.xlsx". It lists every
 //      dealer's stock.
 //   2. Rows with a blank Engine No. / Battery No / Vehicle ChargerNo are taken, whatever their Status (the
 //      In-Transit filter is commented out in readStock for now). VINs missing from the VIN sheet are reported
@@ -26,7 +26,7 @@ import { loadVinDetails, updateVehicles, ResultRow, Log } from './utils/pdiVehic
 //   PDI_DRY_RUN         1 = fill the form but don't click Save (for a first check)
 //   PDI_VIN_FILE        VIN Details workbook or CSV (default: same as PDI.spec.ts)
 //   PDI_LOAD_TIMEOUT_S  longest wait for Show / Save to reload the page (default 30)
-//   STOCK_DOWNLOAD_DIR  where the Inventory Stock Details files go (default: "PDI Update/Downloads")
+//   STOCK_DOWNLOAD_DIR  where the Inventory Stock Details files go (default: "Output/Downloads/PDI")
 //   STOCK_PAGE_WAIT_S   seconds to wait on Inventory Stock Details before View Report (default 5)
 //
 // The result file is Output/PDI runs/PDI_InTransit_<date-time>.xlsx (_DRYRUN added for a dry run). A real
@@ -41,7 +41,7 @@ const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
 const VIN_FILE = vinFilePath();
 const DRY_RUN = process.env.PDI_DRY_RUN === '1';
 const LOAD_TIMEOUT = Number(process.env.PDI_LOAD_TIMEOUT_S || 30) * 1000;
-const DOWNLOAD_DIR = process.env.STOCK_DOWNLOAD_DIR || path.join(__dirname, 'Downloads');
+const DOWNLOAD_DIR = process.env.STOCK_DOWNLOAD_DIR || path.join(OUTPUT_DIR, 'Downloads', 'PDI');
 const PAGE_WAIT_MS = Number(process.env.STOCK_PAGE_WAIT_S || 5) * 1000;
 const RIVER_USER = 'River User';
 

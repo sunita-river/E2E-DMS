@@ -11,7 +11,7 @@ import { missingColumns, blankValues, datesOutsideRange, nonNumeric, gstrTotalsM
 //   CREDENTIALS_FILE   path to a credentials.json (default: resources/credentials.json)
 //   GSTR_OUTPUT_DIR    where the Excel files go (default: <project>/Output)
 //   GSTR_FROM/GSTR_TO  report dates as dd-mm-yyyy (default: 01-09-2026 to yesterday)
-//   REPORT_DOWNLOAD_DIR where 1000+ row report Excels are saved and read from (default: <project>/Downloads)
+//   REPORT_DOWNLOAD_DIR where 1000+ row report Excels are saved and read from (default: <project>/Output/Downloads)
 const CREDENTIALS_FILE = process.env.CREDENTIALS_FILE || path.join(__dirname, '..', 'resources', 'credentials.json');
 const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
 const OUTPUT_DIR = process.env.GSTR_OUTPUT_DIR || path.join(process.cwd(), 'Output');

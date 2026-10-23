@@ -64,7 +64,7 @@ jobs:
       - name: Restore previous MIS snapshot
         uses: actions/cache/restore@v5
         with:
-          path: MIS Reports/MIS_Report_Snapshot_*.json
+          path: Output/MIS/MIS_Report_Snapshot_*.json
           key: mis-snapshot-${{ github.run_id }}
           restore-keys: mis-snapshot-
 
@@ -96,13 +96,13 @@ jobs:
 
       - name: MIS report check
         if: ${{ !cancelled() && (env.SUITE == 'all' || env.SUITE == 'mis-check') }}
-        run: node run_mis_check.js
+        run: node mis-check/run_mis_check.js
 
       - name: Save MIS snapshot for the next run
         uses: actions/cache/save@v5
         if: ${{ !cancelled() && (env.SUITE == 'all' || env.SUITE == 'mis-check') }}
         with:
-          path: MIS Reports/MIS_Report_Snapshot_*.json
+          path: Output/MIS/MIS_Report_Snapshot_*.json
           key: mis-snapshot-${{ github.run_id }}
 
       # Reports contain customer data - keep the downloads short-lived.
@@ -111,7 +111,10 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: gstr-output
-          path: Output/
+          # Not the MIS check's results (own artifact below) or its saved DMS login.
+          path: |
+            Output/
+            !Output/MIS/
           if-no-files-found: ignore
           retention-days: 7
       - name: Upload MIS report check
@@ -119,7 +122,9 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: mis-reports
-          path: MIS Reports/
+          path: |
+            Output/MIS/
+            !Output/MIS/dms-profile/
           if-no-files-found: ignore
           retention-days: 7
       - name: Upload Playwright report and results
@@ -130,6 +135,5 @@ jobs:
           path: |
             playwright-report/
             test-results/
-            allure-results/
           if-no-files-found: ignore
           retention-days: 14

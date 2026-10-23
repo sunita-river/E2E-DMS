@@ -14,7 +14,7 @@ const reportOpenedAt = new WeakMap<Page, number>();
 
 // Over-limit Excel files are kept here (Playwright's own copy is deleted when the run ends),
 // and the rows are read from the kept file. Override with REPORT_DOWNLOAD_DIR.
-const DOWNLOAD_DIR = process.env.REPORT_DOWNLOAD_DIR || path.join(process.cwd(), 'Downloads');
+const DOWNLOAD_DIR = process.env.REPORT_DOWNLOAD_DIR || path.join(process.cwd(), 'Output', 'Downloads');
 
 // Newest .xls/.xlsx in the download folders modified since `since`, or null. Used when the
 // download event never reached Playwright but the browser still saved the file.

@@ -9,10 +9,10 @@
  * A browser window opens and logs in automatically with the "misUser" account
  * from resources/credentials.json (or "dealervalidUser", the Playwright tests'
  * login, when there is no misUser).
- * Your session is kept in the "dms-profile" folder, so next time it goes straight in.
+ * Your session is kept in the Output/MIS/dms-profile folder, so next time it goes straight in.
  * Uses Google Chrome by default; set BROWSER_CHANNEL=msedge to use Microsoft Edge.
  *
- * Output ("MIS Reports" folder):
+ * Output (Output/MIS folder):
  *     MIS_Report_Objects_<date>.xlsx  - formatted sheet (report name, definition, objects) + "Changes vs Previous" sheet
  *     MIS_Report_Check_<date>.csv     - every report with its full path and result
  *     MIS_Report_Summary_<date>.txt   - totals, list of failures, and changes since the previous run
@@ -24,10 +24,11 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const ROOT = path.join(__dirname, '..'); // the repo root
 // CREDENTIALS_FILE / MIS_PROFILE_DIR: optional overrides (e.g. CI secrets file, separate browser profile)
-const credentials = JSON.parse(fs.readFileSync(process.env.CREDENTIALS_FILE || path.join(__dirname, 'resources', 'credentials.json'), 'utf8'));
-const PROFILE_DIR = process.env.MIS_PROFILE_DIR || path.join(__dirname, 'dms-profile');
-require('dotenv').config({ path: path.join(__dirname, '.env') }); // GMAIL_USER / GMAIL_APP_PASSWORD / GMAIL_TO
+const credentials = JSON.parse(fs.readFileSync(process.env.CREDENTIALS_FILE || path.join(ROOT, 'resources', 'credentials.json'), 'utf8'));
+const PROFILE_DIR = process.env.MIS_PROFILE_DIR || path.join(ROOT, 'Output', 'MIS', 'dms-profile');
+require('dotenv').config({ path: path.join(ROOT, '.env') }); // GMAIL_USER / GMAIL_APP_PASSWORD / GMAIL_TO
 
 // Settings
 const CONFIG = {
@@ -56,7 +57,7 @@ const CONFIG = {
   },
 };
 
-const OUT_DIR = path.join(__dirname, 'MIS Reports'); // every output file is saved here
+const OUT_DIR = path.join(ROOT, 'Output', 'MIS'); // every output file is saved here
 
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
@@ -602,7 +603,7 @@ async function runCheck() {
   } catch (e) {
     throw new Error(`Could not start the browser (channel "${channel}"): ${String(e.message).split('\n')[0]}. ` +
       `Install it, or set BROWSER_CHANNEL=msedge / chromium (after "npx playwright install chromium"). ` +
-      `If another MIS check is still running, wait for it - the dms-profile folder can only be used by one at a time.`);
+      `If another MIS check is still running, wait for it - the Output/MIS/dms-profile folder can only be used by one at a time.`);
   }
   try {
     await runWithContext(context);
@@ -715,7 +716,7 @@ async function runWithContext(context) {
 
   rows.forEach(r => { r.objects = r.objects || []; r.objectsText = r.objects.join(', '); });
 
-  // All outputs go to the "MIS Reports" folder; compare with the newest earlier run found there.
+  // All outputs go to Output/MIS; compare with the newest earlier run found there.
   fs.mkdirSync(OUT_DIR, { recursive: true });
   let previous = null;
   try { previous = loadPreviousRun(OUT_DIR); }
@@ -750,7 +751,7 @@ async function runWithContext(context) {
   }
 
   lines.push('', '='.repeat(70));
-  if (!changes) lines.push('CHANGES: no earlier run found in "MIS Reports" - this run is the baseline for next time.');
+  if (!changes) lines.push('CHANGES: no earlier run found in Output/MIS - this run is the baseline for next time.');
   else {
     lines.push(`CHANGES since previous run (${previous.name})`);
     lines.push(`  Reports added   : ${changes.added.length}`);

@@ -1,13 +1,13 @@
 // Merges another PDI history file (from a PC, via the pdi-runs branch) into this one, so the GitHub
 // workflow's "till now" totals include days it never ran (it started on 16-Oct-2026; the PC has 29-Sep on).
-//   node "PDI Update/scripts/pdiMergeHistory.js" <target PDI_History.json> <incoming PDI_History.json>
+//   node "pdi/scripts/pdiMergeHistory.js" <target PDI_History.json> <incoming PDI_History.json>
 // Days only in the incoming file are copied. For a day in both, chassis are combined (dealer + chassis
 // no) and "updated" wins over any other outcome; the target's list of failed dealers is kept.
 const fs = require('node:fs');
 
 const [target, incoming] = process.argv.slice(2);
 if (!target || !incoming) {
-  console.log('Usage: node "PDI Update/scripts/pdiMergeHistory.js" <target> <incoming>');
+  console.log('Usage: node "pdi/scripts/pdiMergeHistory.js" <target> <incoming>');
   process.exit(1);
 }
 const load = (f) => {

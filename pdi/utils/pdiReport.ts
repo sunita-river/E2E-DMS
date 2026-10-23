@@ -8,20 +8,12 @@ import type { PdiHistory } from './pdiHistory';
 // Mail apps strip JavaScript, so the email body is a static (table-based, inline-styled)
 // summary; only Excel files are attached. The interactive dashboards are saved as .html in Output/.
 
-// The VIN Details workbook: PDI_VIN_FILE, else the newest "PDI Update"/VIN*.xlsx or VIN*.csv, so a renamed or
-// re-downloaded copy ("VIN.xlsx", "VIN Details (2).xlsx") or the VIN_Details.csv that the Google Sheet's
-// Apps Script sends to the vin-data branch (npm run pdi:vin) is picked up without changing anything.
+// The VIN Details sheet: only the "VIN BIN Update (Sunitha)" Google Sheet, as resources/VIN_Details.csv. Its
+// Apps Script (resources/apps-script/pushVinToGitHub.gs) sends it to the vin-data branch; npm run pdi:vin (run
+// before every npm run test:pdi*) and the GitHub workflow fetch it from there. Other VIN files are ignored, so
+// an old hand-downloaded copy can't be used by mistake. PDI_VIN_FILE overrides this.
 export function vinFilePath(): string {
-  if (process.env.PDI_VIN_FILE) return process.env.PDI_VIN_FILE;
-  // The "PDI Update" folder, and resources/ where the sheet used to live, so a copy dropped there
-  // out of habit isn't silently ignored; the newest file in either wins.
-  const dir = path.join(__dirname, '..');
-  const newest = [dir, path.join(dir, '..', 'resources')]
-    .flatMap((d) => (fs.existsSync(d) ? fs.readdirSync(d) : [])
-      .filter((f) => /^VIN.*\.(xlsx|csv)$/i.test(f) && !f.startsWith('~$')) // ~$ = Excel's lock file
-      .map((f) => path.join(d, f)))
-    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
-  return newest ?? path.join(dir, 'VIN Details.xlsx');
+  return process.env.PDI_VIN_FILE || path.join(__dirname, '..', '..', 'resources', 'VIN_Details.csv');
 }
 
 export type ResultRow = Record<string, string>;

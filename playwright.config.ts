@@ -7,9 +7,9 @@ import { defineConfig, devices } from '@playwright/test';
 const browserChannel = process.env.BROWSER_CHANNEL || 'chrome';
 
 export default defineConfig({
-  // Specs live in tests/ and, for PDI, in "PDI Update/".
+  // Specs live in tests/ and, for PDI, in pdi/.
   testDir: '.',
-  testMatch: /[\\/](tests|PDI Update)[\\/].*\.spec\.ts$/,
+  testMatch: /[\\/](tests|pdi)[\\/].*\.spec\.ts$/,
     fullyParallel: false,
   timeout:500000,
   // Hard cap for the whole run so a CI job can never hang forever (the GSTR test alone can
@@ -25,7 +25,6 @@ export default defineConfig({
     ['line'],
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
     ['junit', { outputFile: 'test-results/junit.xml' }], // Consumed by CI/CD test-result publishers
-    ['allure-playwright', { outputFolder: 'allure-results' }], // Raw results land here
     ['./tests/reporters/gmail-reporter.ts'],
   ],
 

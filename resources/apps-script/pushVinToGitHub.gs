@@ -1,5 +1,5 @@
 // Sends the VIN details sheet to GitHub so the PDI workflow (.github/workflows/pdi.yml) can read it
-// while the sheet itself stays private. Runs every 30 minutes as the person who set up the trigger;
+// while the sheet itself stays private. Runs every 15 minutes (the sheet itself refreshes every 15) as the person who set up the trigger;
 // it only commits when the sheet's contents have changed.
 //
 // Only one copy of this script may push to the vin-data branch: two copies reading different sheets
@@ -56,13 +56,13 @@ function pushVinToGitHub() {
   Logger.log('Sent ' + (values.length - 1) + ' rows to ' + GITHUB_REPO + ' ' + BRANCH + ':' + FILE_PATH);
 }
 
-// Every 30 minutes; replaces any earlier trigger for pushVinToGitHub.
+// Every 15 minutes; replaces any earlier trigger for pushVinToGitHub.
 function setUpTrigger() {
   ScriptApp.getProjectTriggers()
     .filter(function (t) { return t.getHandlerFunction() === 'pushVinToGitHub'; })
     .forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('pushVinToGitHub').timeBased().everyMinutes(30).create();
-  Logger.log('pushVinToGitHub will run every 30 minutes.');
+  ScriptApp.newTrigger('pushVinToGitHub').timeBased().everyMinutes(15).create();
+  Logger.log('pushVinToGitHub will run every 15 minutes.');
 }
 
 // The data branch starts from the default branch; after that only VIN_Details.csv changes on it.

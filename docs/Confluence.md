@@ -3,7 +3,7 @@
 Automated checks and data fixes for **River DMS** (rivermobility.gaindms.com), built with Playwright. Each automation logs in to the live DMS, does its job, saves the results to Excel and emails a summary.
 
 - **Repository:** https://github.com/sunita-river/E2E-DMS
-- **Test cases:** `Test Cases/DMS_Automation_Test_Cases.xlsx` in the repository (101 cases, 98 passed; ENQ-14 awaits an emailed run, PDI-29 and PDI-30 the email review, PDI-33 a live run)
+- **Test cases:** `docs/DMS_Automation_Test_Cases.xlsx` in the repository (101 cases, 98 passed; ENQ-14 awaits an emailed run, PDI-29 and PDI-30 the email review, PDI-33 a live run)
 - **Owner:** Sunita Sahu
 
 ---
@@ -85,7 +85,7 @@ A run **passes** only when every blank chassis was updated and no dealer failed.
 |---|---|
 | `resources/credentials.json` | Dealer logins: `dealervalidUser` (Enquiry List, MIS), `dealerUsers` (GSTR), `PIDLogin` + `PIDDealerCodes` and `PIDUsers` (PDI) |
 | `.env` | Gmail sender, App Password, recipient, and the PDI CC list |
-| `resources/VIN Details.xlsx` (any `VIN….xlsx` name, e.g. `VIN.xlsx`; the newest is used) | The manufacturer's VIN sheet: columns found by their header in row 1 (VIN, Battery No, Motor No, Charger), in any order |
+| `resources/VIN_Details.csv` | The **VIN BIN Update (Sunitha)** Google Sheet (refreshes every 15 minutes), sent to GitHub by its Apps Script every 15 minutes and fetched before each PDI run. Only this file is used. Columns are found by their header in row 1 (VIN, Battery No, Motor No, Charger), in any order |
 
 **Commands** (in PowerShell use `npm.cmd` if scripts are blocked):
 
@@ -121,7 +121,9 @@ Always do `npm run test:pdi:dry` first, then `npm run test:pdi` to save.
 
 ## Scheduled runs (GitHub Actions)
 
-Enquiry List, GSTR and the MIS check can run on GitHub every day at 07:00 IST, or on demand. PDI is **not** scheduled, because it changes live data and needs the VIN sheet.
+Enquiry List, GSTR and the MIS check can run on GitHub every day at 07:00 IST, or on demand. The ASM-wise report runs every day at 08:00 IST.
+
+PDI runs hourly from 08:00 to 18:00 IST, with the day's PDI email at 19:00 IST. For now the hourly run logs in once as River User, downloads **MIS → MFR Vehicles Reports → Stock → Inventory Stock Details**, and fills every vehicle with a blank Engine / Battery / Charger in that same session (`pdi/PDI_Update_InTransit.spec.ts`). The per-dealer PDI run described above (`pdi/PDI.spec.ts`) is not scheduled at the moment; it can still be run by hand with `npm run test:pdi`.
 
 **One-time setup:** in the repository go to **Settings → Secrets and variables → Actions → Secrets → New repository secret** and add:
 

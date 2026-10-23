@@ -1,7 +1,7 @@
 name: ASM-wise Report
 
 # Downloads the Enquiry List and Booking Master Tracker exports, builds the ASM-wise summary and
-# mails each ASM in ASM_Reportwise/Mapping/ASM_Name_Mapping.xlsx. Scheduled once a day at 08:00 IST; run it by
+# mails each ASM in asm-report/Mapping/ASM_Name_Mapping.xlsx. Scheduled once a day at 08:00 IST; run it by
 # hand (Actions -> ASM-wise Report -> Run workflow) to preview or to send a test copy to GMAIL_TO.
 on:
   workflow_dispatch:
@@ -48,11 +48,11 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: ASM_Reportwise/requirements.txt
+          cache-dependency-path: asm-report/requirements.txt
 
       - name: Install dependencies
         run: |
-          pip install -r ASM_Reportwise/requirements.txt
+          pip install -r asm-report/requirements.txt
           python -m playwright install --with-deps chrome
 
       - name: Write DMS credentials from the CREDENTIALS_JSON secret
@@ -65,14 +65,14 @@ jobs:
             || { echo "::error::CREDENTIALS_JSON is not valid JSON or has no riverUserValidUser"; exit 1; }
 
       - name: Build the ASM-wise summary
-        run: python ASM_Reportwise/asmwise_report.py
+        run: python asm-report/asmwise_report.py
 
       - name: Email the ASMs (${{ env.MODE }})
         run: |
           case "$MODE" in
-            send)    python ASM_Reportwise/asm_email.py --send ;;
-            test)    python ASM_Reportwise/asm_email.py --send --test-to "$GMAIL_TO" ;;
-            *)       python ASM_Reportwise/asm_email.py ;;
+            send)    python asm-report/asm_email.py --send ;;
+            test)    python asm-report/asm_email.py --send --test-to "$GMAIL_TO" ;;
+            *)       python asm-report/asm_email.py ;;
           esac
 
       # The summary holds counts only; the previews hold the ASM emails as sent.
@@ -82,7 +82,7 @@ jobs:
         with:
           name: asmwise-report
           path: |
-            ASM_Reportwise/Output/*.xlsx
-            ASM_Reportwise/Output/email_preview/
+            Output/ASM/*.xlsx
+            Output/ASM/email_preview/
           if-no-files-found: ignore
           retention-days: 7

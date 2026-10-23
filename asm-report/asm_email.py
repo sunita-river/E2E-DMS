@@ -1,18 +1,18 @@
 """Builds one email per ASM from the latest ASMwise summary (a preview; --send mails them).
 
-Reads the newest ASM_Reportwise/Output/ASMwise_AllSources_Summary_*.xlsx and
-ASM_Reportwise/Mapping/ASM_Name_Mapping.xlsx (ASM, ASM Mail ID; Store Name for the tables).
+Reads the newest Output/ASM/ASMwise_AllSources_Summary_*.xlsx and
+asm-report/Mapping/ASM_Name_Mapping.xlsx (ASM, ASM Mail ID; Store Name for the tables).
 Report ASMs are matched to the mapping by name with regular expressions (see match_asms), and
 each match gets one email to that ASM's mail IDs - their overall totals and a dealer-wise table
 per period in the body (no attachment). Report ASMs with no match are listed in index.html and the log.
 
-Writes ASM_Reportwise/Output/email_preview/<date>/:
+Writes Output/ASM/email_preview/<date>/:
     <ASM>.eml       the complete email (open it in Outlook to see it as received)
     <ASM>.html      the body only, for a quick look in the browser
     index.html      who gets what, and the report ASMs with no match in the mapping
 
 Usage (from the repo root):
-    python ASM_Reportwise/asm_email.py [--summary PATH] [--mapping PATH] [--only ADDRESS ...]
+    python asm-report/asm_email.py [--summary PATH] [--mapping PATH] [--only ADDRESS ...]
                                        [--dealer CODE ...] [--send] [--test-to ADDRESS]
                                        [--also-to ADDRESS ...]
 
@@ -65,7 +65,7 @@ MAIL_FROM = os.environ.get("ASM_MAIL_FROM") or os.environ.get("GMAIL_USER", "")
 def latest_summary() -> Path:
     found = sorted(OUTPUT_DIR.glob(SUMMARY_GLOB), key=lambda f: f.stat().st_mtime)
     if not found:
-        raise SystemExit(f"No {SUMMARY_GLOB} in {OUTPUT_DIR}. Run ASM_Reportwise/asmwise_report.py first.")
+        raise SystemExit(f"No {SUMMARY_GLOB} in {OUTPUT_DIR}. Run asm-report/asmwise_report.py first.")
     return found[-1]
 
 

@@ -38,7 +38,7 @@ const VIN_COLUMNS: { key: keyof VinDetails | 'vin'; header: RegExp; label: strin
 ];
 
 export function loadVinDetails(vinFile: string): Map<string, VinDetails> {
-  if (!fs.existsSync(vinFile)) throw new Error(`VIN Details workbook not found: ${vinFile}. Put a "VIN*.xlsx" in resources/, run npm run pdi:vin, or set PDI_VIN_FILE.`);
+  if (!fs.existsSync(vinFile)) throw new Error(`VIN Details workbook not found: ${vinFile}. Run npm run pdi:vin to fetch the VIN Google Sheet, or set PDI_VIN_FILE.`);
   // raw: a CSV's cells stay text, so a long serial isn't turned into a number like 8.9E+18 (no effect on .xlsx).
   const workbook = XLSX.readFile(vinFile, { raw: true });
   const sheet = workbook.Sheets[workbook.SheetNames[0]!]!;

@@ -2,7 +2,7 @@
   "name": "e2e-dms",
   "version": "1.0.0",
   "description": "End-to-end Playwright automation for River DMS: Enquiry List, per-dealer GSTR sales with Post GST Discount from invoice PDFs, PDI blank vehicle details (Engine / Battery / Charger) filled from the VIN sheet, and a health check of all MIS reports, with Excel outputs, run-to-run comparison and email summaries; runs unattended on a server or CI/CD.",
-  "main": "run_mis_check.js",
+  "main": "mis-check/run_mis_check.js",
   "scripts": {
     "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File setup.ps1",
     "test": "playwright test",
@@ -10,18 +10,18 @@
     "test:enquiry-list": "playwright test tests/enquiryListReport.spec.ts",
     "test:gstr": "playwright test \"tests/GSTR Report.spec.ts\"",
     "test:stage": "playwright test \"tests/Automation for Testing.spec.ts\"",
-    "test:pdi:dry": "set PDI_RUN=1&& set PDI_DRY_RUN=1&& playwright test \"PDI Update/PDI.spec.ts\" --headed",
-    "test:pdi": "set PDI_RUN=1&& set PDI_DRY_RUN=&& playwright test \"PDI Update/PDI.spec.ts\" --headed & node \"PDI Update/scripts/pdiPushRuns.js\"",
-    "test:pdi:intransit:dry": "set PDI_RUN=1&& set PDI_DRY_RUN=1&& playwright test \"PDI Update/PDI_Update_InTransit.spec.ts\" --headed",
-    "test:pdi:intransit": "set PDI_RUN=1&& set PDI_DRY_RUN=&& playwright test \"PDI Update/PDI_Update_InTransit.spec.ts\" --headed",
-    "pdi:push-runs": "node \"PDI Update/scripts/pdiPushRuns.js\"",
-    "pdi:vin": "git fetch origin vin-data && git show FETCH_HEAD:VIN_Details.csv > \"PDI Update/VIN_Details.csv\"",
-    "report:pdi-daily": "set PDI_RUN=1&& playwright test \"PDI Update/PDIDailyReport.spec.ts\" --reporter=line",
-    "report:asmwise": "python ASM_Reportwise/asmwise_report.py",
-    "report:asmwise:email": "python ASM_Reportwise/asm_email.py",
-    "report:html":"playwright show-report",
-    "start": "node run_mis_check.js",
-    "mis": "node run_mis_check.js"
+    "test:pdi:dry": "npm run pdi:vin && set PDI_RUN=1&& set PDI_DRY_RUN=1&& playwright test \"pdi/PDI.spec.ts\" --headed",
+    "test:pdi": "npm run pdi:vin && set PDI_RUN=1&& set PDI_DRY_RUN=&& playwright test \"pdi/PDI.spec.ts\" --headed & node \"pdi/scripts/pdiPushRuns.js\"",
+    "test:pdi:intransit:dry": "npm run pdi:vin && set PDI_RUN=1&& set PDI_DRY_RUN=1&& playwright test \"pdi/PDI_Update_InTransit.spec.ts\" --headed",
+    "test:pdi:intransit": "npm run pdi:vin && set PDI_RUN=1&& set PDI_DRY_RUN=&& playwright test \"pdi/PDI_Update_InTransit.spec.ts\" --headed",
+    "pdi:push-runs": "node \"pdi/scripts/pdiPushRuns.js\"",
+    "pdi:vin": "git fetch origin vin-data && git show FETCH_HEAD:VIN_Details.csv > \"resources/VIN_Details.csv\"",
+    "report:pdi-daily": "set PDI_RUN=1&& playwright test \"pdi/PDIDailyReport.spec.ts\" --reporter=line",
+    "report:asmwise": "python asm-report/asmwise_report.py",
+    "report:asmwise:email": "python asm-report/asm_email.py",
+    "report:html": "playwright show-report",
+    "start": "node mis-check/run_mis_check.js",
+    "mis": "node mis-check/run_mis_check.js"
   },
   "keywords": [],
   "author": "",
@@ -30,8 +30,7 @@
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@types/node": "^26.2.0",
-    "@types/nodemailer": "^8.0.1",
-    "allure-playwright": "^3.10.2"
+    "@types/nodemailer": "^8.0.1"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

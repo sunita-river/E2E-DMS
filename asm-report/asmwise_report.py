@@ -1,8 +1,8 @@
 """ASM-wise funnel report, split by lead source.
 
 Logs in to River DMS as riverUserValidUser, exports the Enquiry List and Booking Master Tracker
-Details for Yesterday, MTD and YTD into ASM_Reportwise/Downloads, and builds
-ASM_Reportwise/Output/ASMwise_AllSources_Summary_<yesterday>.xlsx with one block of rows per
+Details for Yesterday, MTD and YTD into Output/Downloads/ASM, and builds
+Output/ASM/ASMwise_AllSources_Summary_<yesterday>.xlsx with one block of rows per
 Dealer Code + ASM and a Yesterday / MTD / YTD column group per source (see SOURCES):
 
     Dealer Code | ASM | Metric | Total Transactions Yesterday MTD YTD | Online ... | Activities ...
@@ -11,9 +11,9 @@ Bookings take the Lead Source of their enquiry (Enquiry Number = Lead No); a boo
 isn't in the exports gets the usual Lead Source of its Primary Enquiry Source.
 
 Usage (from the repo root):
-    python ASM_Reportwise/asmwise_report.py                   download the exports and build the summary
-    python ASM_Reportwise/asmwise_report.py --skip-download   rebuild from the last downloaded exports
-    python ASM_Reportwise/asmwise_report.py --keep-downloads  keep the exports under ASM_Reportwise/Downloads
+    python asm-report/asmwise_report.py                   download the exports and build the summary
+    python asm-report/asmwise_report.py --skip-download   rebuild from the last downloaded exports
+    python asm-report/asmwise_report.py --keep-downloads  keep the exports under Output/Downloads/ASM
 
 Environment: CREDENTIALS_FILE, ASM_OUTPUT_DIR, ASM_DOWNLOAD_DIR, BROWSER_CHANNEL, HEADLESS=1,
 ASM_TODAY=YYYY-MM-DD (run as of that date).
@@ -37,12 +37,13 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from playwright.sync_api import Page, TimeoutError as PWTimeout, sync_playwright
 
-HERE = Path(__file__).resolve().parent  # ASM_Reportwise
+HERE = Path(__file__).resolve().parent  # asm-report
 ROOT = HERE.parent
 BASE_URL = "https://rivermobility.gaindms.com/"
 CREDENTIALS_FILE = Path(os.environ.get("CREDENTIALS_FILE", ROOT / "resources" / "credentials.json"))
-OUTPUT_DIR = Path(os.environ.get("ASM_OUTPUT_DIR", HERE / "Output"))
-DOWNLOAD_DIR = Path(os.environ.get("ASM_DOWNLOAD_DIR", HERE / "Downloads"))
+OUTPUT_DIR = Path(os.environ.get("ASM_OUTPUT_DIR", ROOT / "Output" / "ASM"))
+# Its own folder: it is emptied after each run (clear_downloads).
+DOWNLOAD_DIR = Path(os.environ.get("ASM_DOWNLOAD_DIR", ROOT / "Output" / "Downloads" / "ASM"))
 
 # Column groups: (heading, Lead Source counted; None = every source). The Enquiry List form
 # can't filter on Lead Source, so the exports are split here.
