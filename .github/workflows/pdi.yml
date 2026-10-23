@@ -135,12 +135,13 @@ jobs:
             node "PDI Update/scripts/pdiMergeHistory.js" Output/PDI_History.json "$RUNNER_TEMP/pc_history.json"
           fi
 
-      - name: PDI fill and Save
-        if: env.TASK == 'pdi'
-        run: npx playwright test "PDI Update/PDI.spec.ts"
+      # PDI.spec.ts is off for now: the Inventory Stock Details run below covers the blank vehicles as River User.
+      # - name: PDI fill and Save
+      #   if: env.TASK == 'pdi'
+      #   run: npx playwright test "PDI Update/PDI.spec.ts"
 
-      # In-Transit vehicles from MIS > Inventory Stock Details ("PDI Update/PDI_Update_InTransit.spec.ts"),
-      # after the PDI step and even if it reported problems. Only vehicles with a blank Engine / Battery / Charger are taken.
+      # Vehicles from MIS > Inventory Stock Details ("PDI Update/PDI_Update_InTransit.spec.ts"), one River User
+      # session. Only vehicles with a blank Engine / Battery / Charger are taken.
       - name: In-Transit fill and Save
         if: ${{ !cancelled() && (env.TASK == 'pdi' || env.TASK == 'intransit') }}
         run: npx playwright test "PDI Update/PDI_Update_InTransit.spec.ts"

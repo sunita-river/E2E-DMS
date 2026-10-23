@@ -122,6 +122,8 @@ export interface UpdateOptions {
   // Set when the fields may already hold values: their old values are written to row.BlankFields
   // after this label (e.g. "Correction, before"), so the report shows what was overwritten.
   recordBefore?: string;
+  // How to log in again if the session drops (default: the dealer login with `dealer`).
+  relogin?: () => Promise<void>;
 }
 
 // SETTINGS -> Admin -> Modify vehicle details: for each row's ChassisNo, Show it, fill Engine No, Battery and
@@ -169,9 +171,13 @@ export async function updateVehicles(page: Page, loginPage: LoginPage, dealer: U
     await page.goto(MODIFY_VEHICLE_URL).catch(() => {});
     if (await identifierInput.isVisible({ timeout: 15000 }).catch(() => false)) return;
     log('[STEP] Modify vehicle details not available (session lost?), logging in again...');
-    await loginPage.goto();
-    await loginPage.login(dealer);
-    await loginPage.verifyDashboard();
+    if (opts.relogin) {
+      await opts.relogin();
+    } else {
+      await loginPage.goto();
+      await loginPage.login(dealer);
+      await loginPage.verifyDashboard();
+    }
     await page.goto(MODIFY_VEHICLE_URL);
     await identifierInput.waitFor({ timeout: 60000 });
   };
