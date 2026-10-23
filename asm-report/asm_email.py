@@ -14,12 +14,13 @@ Writes Output/ASM/email_preview/<date>/:
 Usage (from the repo root):
     python asm-report/asm_email.py [--summary PATH] [--mapping PATH] [--only ADDRESS ...]
                                        [--dealer CODE ...] [--send] [--test-to ADDRESS]
-                                       [--also-to ADDRESS ...]
+                                       [--also-to ADDRESS ...] [--asm NAME ...] [--cc ADDRESS ...]
 
 --send mails them through Gmail (GMAIL_USER / GMAIL_APP_PASSWORD from .env), and only when the
-summary is for yesterday unless --summary is given. --only limits it to those ASM addresses and
---dealer to those dealer codes; --test-to sends every email to ADDRESS instead of the ASMs
-(subject marked [TEST]); --also-to adds those addresses to every email.
+summary is for yesterday unless --summary is given. --only limits it to those ASM addresses,
+--asm to those ASM names (matched like the mapping, e.g. "Akram") and --dealer to those dealer
+codes; --test-to sends every email to ADDRESS instead of the ASMs (subject marked [TEST], no Cc);
+--also-to adds those addresses to every email and --cc copies them on every email.
 
 Environment: ASM_MAIL_FROM (From address; defaults to GMAIL_USER).
 """
@@ -234,6 +235,8 @@ def main() -> None:
     ap.add_argument("--send", action="store_true", help="send the emails through Gmail")
     ap.add_argument("--test-to", metavar="ADDRESS", help="send every email to ADDRESS instead of the ASMs")
     ap.add_argument("--also-to", nargs="+", metavar="ADDRESS", default=[], help="add these addresses to every email")
+    ap.add_argument("--asm", nargs="+", metavar="NAME", help="only these ASMs (by name)")
+    ap.add_argument("--cc", nargs="+", metavar="ADDRESS", default=[], help="Cc these addresses on every email")
     args = ap.parse_args()
 
     summary_path = args.summary or latest_summary()
@@ -266,6 +269,12 @@ def main() -> None:
                       for (label, mails), asms in recipients.items() if any(m.casefold() in only for m in mails)}
         if not recipients:
             raise SystemExit(f"No report ASM is mapped to the address(es) {', '.join(args.only)}")
+    if args.asm:
+        wanted = [name_pattern(n) for n in args.asm]
+        recipients = {k: asms for k, asms in recipients.items()
+                      if any(p.search(n) for p in wanted for n in (k[0], *asms))}
+        if not recipients:
+            raise SystemExit(f"No report ASM matches the name(s) {', '.join(args.asm)}")
 
     smtp = None
     if args.send:
@@ -291,6 +300,8 @@ def main() -> None:
         msg = EmailMessage()
         msg["From"] = MAIL_FROM or "(set ASM_MAIL_FROM)"
         msg["To"] = ", ".join([args.test_to or to, *args.also_to])
+        if args.cc and not args.test_to:
+            msg["Cc"] = ", ".join(args.cc)
         msg["Subject"] = (f"{'[TEST] ' if args.test_to else ''}ASM-wise {SOURCE_LABEL} Summary - "
                           f"{display} - {yesterday:%d-%b-%Y}")
         msg["Date"] = formatdate(localtime=True)
@@ -303,7 +314,8 @@ def main() -> None:
         if smtp:
             smtp.send_message(msg)
         n = rows["Dealer Code"].nunique()
-        log(f"{', '.join(asms)} [{label}] <{to}> -> {msg['To']}  ({n} dealers)" + ("  SENT" if smtp else ""))
+        cc = f"  cc {msg['Cc']}" if msg["Cc"] else ""
+        log(f"{', '.join(asms)} [{label}] <{to}> -> {msg['To']}{cc}  ({n} dealers)" + ("  SENT" if smtp else ""))
         index_rows.append((label, to, ", ".join(asms), n, msg["Subject"], f"{slug}.eml"))
 
     if smtp:

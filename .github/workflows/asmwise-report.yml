@@ -67,12 +67,14 @@ jobs:
       - name: Build the ASM-wise summary
         run: python asm-report/asmwise_report.py
 
+      # Only these ASMs for now, with ashishg@ on Cc; drop ASMS to mail every ASM in the mapping.
       - name: Email the ASMs (${{ env.MODE }})
         run: |
+          ASMS=(--asm Santhosh "Narendra Thota" Dinith Akram)
           case "$MODE" in
-            send)    python asm-report/asm_email.py --send ;;
-            test)    python asm-report/asm_email.py --send --test-to "$GMAIL_TO" ;;
-            *)       python asm-report/asm_email.py ;;
+            send)    python asm-report/asm_email.py --send "${ASMS[@]}" --cc ashishg@rideriver.com ;;
+            test)    python asm-report/asm_email.py --send --test-to "$GMAIL_TO" "${ASMS[@]}" ;;
+            *)       python asm-report/asm_email.py "${ASMS[@]}" ;;
           esac
 
       # The summary holds counts only; the previews hold the ASM emails as sent.
