@@ -1,7 +1,7 @@
 name: ASM-wise Report
 
 # Downloads the Enquiry List and Booking Master Tracker exports, builds the ASM-wise summary and
-# mails each ASM in ASM_Reportwise/Mapping/ASM_Name_Mapping.xlsx. Scheduled twice a day; run it by
+# mails each ASM in ASM_Reportwise/Mapping/ASM_Name_Mapping.xlsx. Scheduled once a day at 08:00 IST; run it by
 # hand (Actions -> ASM-wise Report -> Run workflow) to preview or to send a test copy to GMAIL_TO.
 on:
   workflow_dispatch:
@@ -12,8 +12,7 @@ on:
         options: [test, preview, send]
         default: test
   schedule:
-    - cron: '30 3 * * *'    # every day 09:00 IST
-    - cron: '30 13 * * *'   # every day 19:00 IST
+    - cron: '30 2 * * *'    # every day 08:00 IST
 
 concurrency:
   group: asmwise-report

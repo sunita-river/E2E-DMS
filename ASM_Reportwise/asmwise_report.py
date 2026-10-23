@@ -135,7 +135,7 @@ class Portal:
     def _fresh_form(self) -> None:
         # Reopen from the dashboard to reset the postback form.
         self.page.locator('a[href*="UserDashboard.aspx"]').first.click()
-        self.page.wait_for_load_state("load")
+        self.page.wait_for_load_state("domcontentloaded")  # "load" can hang on slow dashboard assets
         self._menu(" Enquiry Reports")  # collapses any open submenu
         self._menu(" MFR Vehicles Reports")
 

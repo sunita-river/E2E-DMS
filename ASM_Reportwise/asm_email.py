@@ -14,11 +14,12 @@ Writes ASM_Reportwise/Output/email_preview/<date>/:
 Usage (from the repo root):
     python ASM_Reportwise/asm_email.py [--summary PATH] [--mapping PATH] [--only ADDRESS ...]
                                        [--dealer CODE ...] [--send] [--test-to ADDRESS]
+                                       [--also-to ADDRESS ...]
 
 --send mails them through Gmail (GMAIL_USER / GMAIL_APP_PASSWORD from .env), and only when the
 summary is for yesterday unless --summary is given. --only limits it to those ASM addresses and
 --dealer to those dealer codes; --test-to sends every email to ADDRESS instead of the ASMs
-(subject marked [TEST]).
+(subject marked [TEST]); --also-to adds those addresses to every email.
 
 Environment: ASM_MAIL_FROM (From address; defaults to GMAIL_USER).
 """
@@ -232,6 +233,7 @@ def main() -> None:
     ap.add_argument("--dealer", nargs="+", metavar="CODE", help="only these dealer codes")
     ap.add_argument("--send", action="store_true", help="send the emails through Gmail")
     ap.add_argument("--test-to", metavar="ADDRESS", help="send every email to ADDRESS instead of the ASMs")
+    ap.add_argument("--also-to", nargs="+", metavar="ADDRESS", default=[], help="add these addresses to every email")
     args = ap.parse_args()
 
     summary_path = args.summary or latest_summary()
@@ -288,7 +290,7 @@ def main() -> None:
         body = body_html(display, total, rows, plist, yesterday, names)
         msg = EmailMessage()
         msg["From"] = MAIL_FROM or "(set ASM_MAIL_FROM)"
-        msg["To"] = args.test_to or to
+        msg["To"] = ", ".join([args.test_to or to, *args.also_to])
         msg["Subject"] = (f"{'[TEST] ' if args.test_to else ''}ASM-wise {SOURCE_LABEL} Summary - "
                           f"{display} - {yesterday:%d-%b-%Y}")
         msg["Date"] = formatdate(localtime=True)

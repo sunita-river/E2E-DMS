@@ -2,7 +2,7 @@
 rem ASM-wise report: downloads the 6 MIS exports into ASM_Reportwise\Downloads, builds
 rem ASM_Reportwise\Output\ASMwise_AllSources_Summary_<yesterday>.xlsx and, if that worked, mails
 rem each ASM in ASM_Reportwise\Mapping\ASM_Name_Mapping.xlsx. For a local run; the schedule is
-rem .github\workflows\asmwise-report.yml (daily at 09:00 and 19:00 IST).
+rem .github\workflows\asmwise-report.yml (daily at 08:00 IST).
 rem Output goes to ASM_Reportwise\Output\logs\asmwise_report.log.
 cd /d "%~dp0.."
 set LOG=ASM_Reportwise\Output\logs\asmwise_report.log
