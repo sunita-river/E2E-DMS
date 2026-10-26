@@ -5,6 +5,7 @@ asm-report/Mapping/ASM_Name_Mapping.xlsx (ASM, ASM Mail ID; Store Name for the t
 Report ASMs are matched to the mapping by name with regular expressions (see match_asms), and
 each match gets one email to that ASM's mail IDs - their overall totals and a dealer-wise table
 per period in the body (no attachment). Report ASMs with no match are listed in index.html and the log.
+DISPLAY_NAMES renames a DMS ASM in its email ("Akram Shaikh" is greeted as "Mohammed Akram Khan").
 
 Writes Output/ASM/email_preview/<date>/:
     <ASM>.eml       the complete email (open it in Outlook to see it as received)
@@ -47,6 +48,8 @@ from asmwise_report import (HERE, METRICS, OUTPUT_DIR, PERCENT_METRICS, SOURCE_L
 MAPPING_FILE = HERE / "Mapping" / "ASM_Name_Mapping.xlsx"
 SUMMARY_GLOB = f"{SUMMARY_NAME}_*.xlsx"
 ENV_FILE = HERE.parent / ".env"
+# DMS ASM name -> the name the email uses (greeting, subject, file name) where the DMS has it wrong.
+DISPLAY_NAMES = {"Akram Shaikh": "Mohammed Akram Khan"}
 
 
 def load_env(path: Path = ENV_FILE) -> None:
@@ -272,7 +275,8 @@ def main() -> None:
     if args.asm:
         wanted = [name_pattern(n) for n in args.asm]
         recipients = {k: asms for k, asms in recipients.items()
-                      if any(p.search(n) for p in wanted for n in (k[0], *asms))}
+                      if any(p.search(n) for p in wanted
+                             for n in (k[0], *asms, *(DISPLAY_NAMES.get(a, a) for a in asms)))}
         if not recipients:
             raise SystemExit(f"No report ASM matches the name(s) {', '.join(args.asm)}")
 
@@ -291,7 +295,8 @@ def main() -> None:
     index_rows = []
     for (label, mails), asms in sorted(recipients.items()):
         to = ", ".join(mails)
-        display = asms[0]  # the DMS name, never a mail address ("Vempati Sai Ram" for both spellings)
+        # The DMS name, never a mail address ("Vempati Sai Ram" for both spellings), unless renamed
+        display = DISPLAY_NAMES.get(asms[0], asms[0])
         rows = summary[summary["ASM"].isin(asms)]
         total = overall(rows, labels)
         slug = re.sub(r"\W+", "_", display).strip("_")
