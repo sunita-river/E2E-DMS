@@ -1,6 +1,6 @@
 // Sends this PC's PDI run files (Output/PDI runs/PDI_BlankChassis_*.xlsx and PDI_InTransit_*.xlsx) to the pdi-runs branch on
 // GitHub, so the GitHub PDI workflow (.github/workflows/pdi.yml) merges them into its daily file,
-// history and 19:00 email along with its own hourly runs.
+// history and 19:17 email along with its own hourly runs.
 //
 // Only the last 3 days' run files are sent (the daily merge keeps 3 days). The working tree and the
 // current branch are not touched: the commit is built with a temporary index and pushed straight to

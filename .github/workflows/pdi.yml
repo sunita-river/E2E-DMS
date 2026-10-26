@@ -6,13 +6,13 @@ name: PDI
 # The VIN details come from the (private) VIN Google Sheet: its Apps Script
 # (resources/apps-script/pushVinToGitHub.gs) sends it every 15 minutes, when changed, to VIN_Details.csv
 # on the vin-data branch, and each run reads that file. The team only has to keep the sheet up to date.
-#   - hourly 08:00-18:00 IST: fill and Save as River User from Inventory Stock Details (no email)
-#   - daily 19:00 IST: the day's one PDI email, covering all of that day's runs
+#   - hourly 07:47-17:47 IST: fill and Save as River User from Inventory Stock Details (no email)
+#   - daily 19:17 IST: the day's one PDI email, covering all of that day's runs
 # GitHub may start scheduled runs some minutes late.
 on:
   schedule:
-    - cron: '30 2-12 * * *'   # 08:00-18:00 IST, hourly
-    - cron: '30 13 * * *'     # 19:00 IST
+    - cron: '17 2-12 * * *'   # 07:47-17:47 IST, hourly (off :00/:30, when GitHub drops the most scheduled runs)
+    - cron: '47 13 * * *'     # 19:17 IST
   workflow_dispatch:
     inputs:
       task:
@@ -30,7 +30,7 @@ on:
 # so the daily email has its own group (else it would cancel a waiting hourly run) and instead waits
 # itself for any PDI run still going or queued (first step below).
 concurrency:
-  group: ${{ (github.event.inputs.task == 'daily-email' || github.event.schedule == '30 13 * * *') && 'pdi-email' || 'pdi' }}
+  group: ${{ (github.event.inputs.task == 'daily-email' || github.event.schedule == '47 13 * * *') && 'pdi-email' || 'pdi' }}
   cancel-in-progress: false
 
 permissions:
@@ -52,7 +52,7 @@ jobs:
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       GMAIL_TO: ${{ secrets.GMAIL_TO }}
       PDI_CC: ${{ secrets.PDI_CC }}
-      TASK: ${{ github.event.inputs.task || (github.event.schedule == '30 13 * * *' && 'daily-email') || 'pdi' }}
+      TASK: ${{ github.event.inputs.task || (github.event.schedule == '47 13 * * *' && 'daily-email') || 'pdi' }}
     steps:
       # The email must include the day's last hourly run, so wait (up to 130 min) for PDI runs still going or queued.
       - name: Wait for PDI runs still going

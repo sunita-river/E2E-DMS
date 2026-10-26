@@ -124,7 +124,7 @@ Always do `npm run test:pdi:dry` first, then `npm run test:pdi` to save.
 
 Enquiry List, GSTR and the MIS check can run on GitHub every day at 07:00 IST, or on demand. The ASM-wise report runs every day at 08:00 IST.
 
-PDI runs hourly from 08:00 to 18:00 IST, with the day's PDI email at 19:00 IST. For now the hourly run logs in once as River User, downloads **MIS → MFR Vehicles Reports → Stock → Inventory Stock Details**, and fills every vehicle with a blank Engine / Battery / Charger in that same session (`pdi/PDI_Update_InTransit.spec.ts`). The per-dealer PDI run described above (`pdi/PDI.spec.ts`) is not scheduled at the moment; it can still be run by hand with `npm run test:pdi`.
+PDI runs hourly from 07:47 to 17:47 IST, with the day's PDI email at 19:17 IST. For now the hourly run logs in once as River User, downloads **MIS → MFR Vehicles Reports → Stock → Inventory Stock Details**, and fills every vehicle with a blank Engine / Battery / Charger in that same session (`pdi/PDI_Update_InTransit.spec.ts`). The per-dealer PDI run described above (`pdi/PDI.spec.ts`) is not scheduled at the moment; it can still be run by hand with `npm run test:pdi`.
 
 **One-time setup:** in the repository go to **Settings → Secrets and variables → Actions → Secrets → New repository secret** and add:
 
