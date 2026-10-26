@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ResultRow, FailedDealer, ReportMeta, vinFilePath, writePdiMasterDashboard, inTransitSummary } from './pdiReport';
 import { writePdiWorkbook, writePdiMaster, readPdiRow } from './pdiWorkbook';
-import { recordPdiHistory, PdiHistory } from './pdiHistory';
+import { recordPdiHistory, PdiHistory, HistoryEntry } from './pdiHistory';
 
 // The day's single PDI copy: Output/PDI_Daily_<yyyy-mm-dd>.xlsx (+ .html dashboard), rebuilt by every
 // PDI run (PDI.spec.ts) from that day's run files and emailed once by PDIDailyReport.spec.ts.
@@ -238,12 +238,28 @@ async function refreshPdiMaster(inTransitAll: ResultRow[]): Promise<PdiHistory> 
     const rows = sheet ? XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: '' }) : [];
     return rows.filter((r) => String(r[5] ?? '').startsWith('Failed')).map((r) => String(r[0]));
   };
-  const fromDaily: { day: string; rows: ResultRow[]; failed: string[] }[] = [];
+  // Dealers the day's PDI runs checked: the by-dealer rows under the Dealer/Result header (not failed),
+  // plus the "No blank PDI rows (n dealers): ..." line. None on a day with only In-Transit runs.
+  const checkedDealers = (file: string) => {
+    const sheet = XLSX.readFile(file).Sheets['Summary'];
+    const rows = sheet ? XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: '' }) : [];
+    const head = rows.findIndex((r) => r[0] === 'Dealer' && r[5] === 'Result');
+    if (head < 0) return [];
+    return rows.slice(head + 1).flatMap((r) => {
+      const clean = String(r[0] ?? '').match(/^No blank PDI rows \(\d+ dealers\):\s*(.*)$/);
+      if (clean) return clean[1]!.split(',').map((d) => d.trim()).filter(Boolean);
+      return r[0] && r[5] && !String(r[5]).startsWith('Failed') ? [String(r[0])] : [];
+    });
+  };
+  const fromDaily: HistoryEntry[] = [];
   const days = keptDays()
     .map((day) => {
       const daily = path.join(OUTPUT_DIR, `PDI_Daily_${day}.xlsx`);
       if (fs.existsSync(daily)) {
-        const entry = { day, rows: sheetRows(daily, 'PDI Daily') ?? [], failed: failedDealers(daily) };
+        const entry = {
+          day, rows: sheetRows(daily, 'PDI Daily') ?? [], failed: failedDealers(daily),
+          checked: checkedDealers(daily), inTransit: sheetRows(daily, 'In-Transit') ?? [],
+        };
         fromDaily.push(entry);
         return entry;
       }
@@ -251,7 +267,7 @@ async function refreshPdiMaster(inTransitAll: ResultRow[]): Promise<PdiHistory> 
       return kept ? { day, rows: kept } : null;
     })
     .filter((d): d is { day: string; rows: ResultRow[] } => !!d);
-  const history = recordPdiHistory(HISTORY_FILE, fromDaily);
+  const history = recordPdiHistory(HISTORY_FILE, fromDaily, inTransitAll);
   if ((days.length || inTransitAll.length) && await writePdiMaster(MASTER_FILE, days, history, inTransitAll)) {
     console.log(`[STEP] PDI master updated: ${MASTER_FILE} (${days.map((d) => `${d.day}: ${d.rows.length} chassis`).join(', ')})`);
     writePdiMasterDashboard(days, MASTER_FILE);

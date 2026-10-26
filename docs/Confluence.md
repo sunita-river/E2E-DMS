@@ -53,7 +53,7 @@ A run **passes** only when every blank chassis was updated and no dealer failed.
 | Dry run | Sent to the report owner only |
 
 ### The report
-- **Email body:** the day's headline numbers (blank chassis found, updated, not in the VIN sheet, errors); **"Till now" KPIs** since tracking began (total chassis found, total updated, no usable VIN data still open); a **day-wise tracking table** for the last 14 days with running totals; a bar per dealer; and a list of anything that needs attention.
+- **Email body:** the day's headline numbers (blank chassis found, updated, not in the VIN sheet, errors); **"Till now" KPIs** from the day tracking began to the latest day, blank PDI and In-Transit chassis together (total chassis found, total updated, no usable VIN data still open); a **day-wise tracking table** for the last 14 days with running totals; a bar per dealer; and a list of anything that needs attention.
 - **Attachments:** Excel only — the day's workbook and **PDI_Master.xlsx**. No HTML files are emailed.
 - **PDI_Master.xlsx:** opens on a **Tracking** sheet (the "till now" KPIs and one row per day since tracking began, with a green bar on Updated to show the trend), then one sheet per day for the last 3 days with every chassis.
 - **Dashboards (saved on the PC, not emailed):** `Output/PDI_Master.html` covers the last 3 days (totals, a day-wise chart, chassis updated per dealer per day, every chassis with filters and search). `Output/PDI_Daily_<date>.html` covers one day (click a dealer to filter, filter by outcome, search, sort). Both work on a phone and in dark mode.

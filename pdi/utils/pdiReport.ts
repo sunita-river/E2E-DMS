@@ -92,7 +92,7 @@ function historyHtml(history: PdiHistory | undefined, font: string, tile: (v: nu
     </tr>`;
   }).join('');
   return `
-      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 4px;">Till now · since ${esc(fmtDay(history.since!))}</h3>
+      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 4px;">Till now · ${esc(fmtDay(history.since!))} to ${esc(fmtDay(now.day))} · PDI + In-Transit</h3>
       <table width="100%" cellpadding="0" cellspacing="0"><tr>
         ${tile(now.totalFound, 'Total chassis found', '#16325c')}
         ${tile(now.totalUpdated, 'Total chassis updated', '#0ca30c')}
@@ -105,7 +105,7 @@ function historyHtml(history: PdiHistory | undefined, font: string, tile: (v: nu
       </table>
       <div style="${font}font-size:11px;color:#8a8984;margin-top:6px;">
         <span style="color:#0ca30c;">■</span> Updated &nbsp;<span style="color:#fab219;">■</span> No usable VIN data &nbsp;<span style="color:#d03b3b;">■</span> Error ·
-        Shaded columns are running totals till that day. A chassis that stopped showing as blank counts as updated.
+        Found counts blank PDI and In-Transit chassis. Shaded columns are running totals till that day. A blank PDI chassis that stopped showing as blank when its dealer was checked counts as updated.
       </div>`;
 }
 

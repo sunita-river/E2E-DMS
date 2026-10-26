@@ -2,7 +2,8 @@
 // workflow's "till now" totals include days it never ran (it started on 16-Oct-2026; the PC has 29-Sep on).
 //   node "pdi/scripts/pdiMergeHistory.js" <target PDI_History.json> <incoming PDI_History.json>
 // Days only in the incoming file are copied. For a day in both, chassis are combined (dealer + chassis
-// no) and "updated" wins over any other outcome; the target's list of failed dealers is kept.
+// no) and "updated" wins over any other outcome, for the blank PDI chassis and the In-Transit vehicles
+// alike; the dealers checked are combined; the target's list of failed dealers is kept.
 const fs = require('node:fs');
 
 const [target, incoming] = process.argv.slice(2);
@@ -28,14 +29,24 @@ for (const [day, entry] of Object.entries(other.days)) {
     addedDays++;
     continue;
   }
-  const rows = new Map(mine.rows.map((r) => [`${r[0]}|${r[1]}`, r]));
-  for (const r of entry.rows) {
+  // Dealers checked: combined. A day saved before they were kept, with blank rows, means a full PDI run;
+  // it stays without the list so every dealer but the failed ones still counts as checked.
+  const legacyFullRun = !mine.checked && mine.rows.length > 0;
+  mine.rows = combine(mine.rows, entry.rows);
+  if (entry.inTransit || mine.inTransit) mine.inTransit = combine(mine.inTransit || [], entry.inTransit || []);
+  if (!legacyFullRun && (mine.checked || entry.checked)) mine.checked = [...new Set([...(mine.checked || []), ...(entry.checked || [])])];
+}
+
+// Chassis lists combined by dealer + chassis no; "updated" wins over any other outcome.
+function combine(mineRows, otherRows) {
+  const rows = new Map(mineRows.map((r) => [`${r[0]}|${r[1]}`, r]));
+  for (const r of otherRows) {
     const key = `${r[0]}|${r[1]}`;
     const have = rows.get(key);
     if (!have) { rows.set(key, r); addedRows++; }
     else if (r[2] === 'updated' && have[2] !== 'updated') rows.set(key, r);
   }
-  mine.rows = [...rows.values()];
+  return [...rows.values()];
 }
 fs.mkdirSync(require('node:path').dirname(target), { recursive: true });
 fs.writeFileSync(target, JSON.stringify(base));

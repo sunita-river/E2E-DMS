@@ -194,7 +194,7 @@ function addHistory(wb: ExcelJS.Workbook, history: PdiHistory) {
   ws.getCell('A1').alignment = { vertical: 'middle', indent: 1 };
   ws.getRow(1).height = 32;
   ws.mergeCells('A2:H2');
-  ws.getCell('A2').value = `Since ${history.since} · ${history.days.length} day(s) · a chassis that stopped showing as blank counts as updated`;
+  ws.getCell('A2').value = `${history.since} to ${now.day} · ${history.days.length} day(s) · PDI + In-Transit · a blank PDI chassis that stopped showing as blank when its dealer was checked counts as updated`;
   ws.getCell('A2').font = { color: { argb: INK2 } };
   ws.getCell('A2').alignment = { indent: 1 };
 
@@ -220,7 +220,7 @@ function addHistory(wb: ExcelJS.Workbook, history: PdiHistory) {
   ws.getRow(5).height = 22;
 
   const head = ws.getRow(7);
-  head.values = ['Day', 'Blank found', 'Updated', 'No usable VIN', 'Errors', 'Total found', 'Total updated', 'Still no VIN data'];
+  head.values = ['Day', 'Found', 'Updated', 'No usable VIN', 'Errors', 'Total found', 'Total updated', 'Still no VIN data'];
   head.height = 30;
   head.eachCell((c) => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = fill(BRAND); c.border = BORDER; c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
 
