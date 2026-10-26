@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import ExcelJS from 'exceljs';
-import { outcomeOf, ResultRow, FailedDealer, InTransitSummary } from './pdiReport';
+import { outcomeOf, ResultRow, FailedDealer, InTransitSummary, IT_LABEL } from './pdiReport';
 import type { PdiHistory } from './pdiHistory';
 
 // Formatted Excel for the PDI run (PDI.spec.ts) and the daily summary (PDIDailyReport.spec.ts):
@@ -133,9 +133,9 @@ function addSummary(wb: ExcelJS.Workbook, book: PdiWorkbook) {
   ]);
   const it = book.inTransit?.summary;
   if (it) {
-    section(7, 'In-Transit', [
+    section(7, IT_LABEL, [
       ['Total chassis found', it.found, NAVY],
-      ['In-Transit updated', it.updated, TONES.good],
+      ['VIN Updated', it.updated, TONES.good],
       ['No usable VIN data', it.missing, TONES.warn],
       ['Errors', it.error, TONES.crit],
     ]);
@@ -194,7 +194,7 @@ function addHistory(wb: ExcelJS.Workbook, history: PdiHistory) {
   ws.getCell('A1').alignment = { vertical: 'middle', indent: 1 };
   ws.getRow(1).height = 32;
   ws.mergeCells('A2:H2');
-  ws.getCell('A2').value = `${history.since} to ${now.day} · ${history.days.length} day(s) · PDI + In-Transit · a blank PDI chassis that stopped showing as blank when its dealer was checked counts as updated`;
+  ws.getCell('A2').value = `${history.since} to ${now.day} · ${history.days.length} day(s) · PDI + Stock Inventory · a blank PDI chassis that stopped showing as blank when its dealer was checked counts as updated`;
   ws.getCell('A2').font = { color: { argb: INK2 } };
   ws.getCell('A2').alignment = { indent: 1 };
 

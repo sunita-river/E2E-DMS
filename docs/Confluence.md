@@ -53,6 +53,7 @@ A run **passes** only when every blank chassis was updated and no dealer failed.
 | Dry run | Sent to the report owner only |
 
 ### The report
+- **For now** the email shows the In-Transit vehicles as **"Incomplete VIN from Stock Inventory"** (tile "VIN Updated") and hides the blank PDI section; set `PDI_SHOW_BLANK=1` to show it again. "Till now" still counts both.
 - **Email body:** the day's headline numbers (blank chassis found, updated, not in the VIN sheet, errors); **"Till now" KPIs** from the day tracking began to the latest day, blank PDI and In-Transit chassis together (total chassis found, total updated, no usable VIN data still open); a **day-wise tracking table** for the last 14 days with running totals; a bar per dealer; and a list of anything that needs attention.
 - **Attachments:** Excel only — the day's workbook and **PDI_Master.xlsx**. No HTML files are emailed.
 - **PDI_Master.xlsx:** opens on a **Tracking** sheet (the "till now" KPIs and one row per day since tracking began, with a green bar on Updated to show the trend), then one sheet per day for the last 3 days with every chassis.

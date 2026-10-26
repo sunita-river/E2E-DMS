@@ -24,6 +24,12 @@ export interface InTransitSummary { found: number; updated: number; missing: num
 export interface ReportMeta { dryRun: boolean; startedAt: Date; finishedAt: Date; dealers: string[]; vinFile: string; title?: string; history?: PdiHistory; inTransit?: InTransitSummary | undefined; inTransitRows?: ResultRow[] | undefined }
 const titleOf = (m: ReportMeta) => m.title || 'PDI vehicle details';
 
+// The In-Transit vehicles' name in the report. While only the Stock Inventory run is scheduled, a report
+// that has them hides the blank PDI section (tiles, by-dealer list, its problems); PDI_SHOW_BLANK=1 shows
+// it again. "Till now" still counts both. A report without Stock Inventory vehicles always shows PDI.
+export const IT_LABEL = 'Incomplete VIN from Stock Inventory';
+const hidePdi = (m: ReportMeta) => !!m.inTransit && process.env.PDI_SHOW_BLANK !== '1';
+
 type Outcome = 'updated' | 'dryrun' | 'missing' | 'error';
 const OUTCOMES: { key: Outcome; label: string; color: string }[] = [
   { key: 'updated', label: 'Updated', color: '#0ca30c' },
@@ -92,7 +98,7 @@ function historyHtml(history: PdiHistory | undefined, font: string, tile: (v: nu
     </tr>`;
   }).join('');
   return `
-      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 4px;">Till now · ${esc(fmtDay(history.since!))} to ${esc(fmtDay(now.day))} · PDI + In-Transit</h3>
+      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 4px;">Till now · ${esc(fmtDay(history.since!))} to ${esc(fmtDay(now.day))} · PDI + Stock Inventory</h3>
       <table width="100%" cellpadding="0" cellspacing="0"><tr>
         ${tile(now.totalFound, 'Total chassis found', '#16325c')}
         ${tile(now.totalUpdated, 'Total chassis updated', '#0ca30c')}
@@ -105,15 +111,26 @@ function historyHtml(history: PdiHistory | undefined, font: string, tile: (v: nu
       </table>
       <div style="${font}font-size:11px;color:#8a8984;margin-top:6px;">
         <span style="color:#0ca30c;">■</span> Updated &nbsp;<span style="color:#fab219;">■</span> No usable VIN data &nbsp;<span style="color:#d03b3b;">■</span> Error ·
-        Found counts blank PDI and In-Transit chassis. Shaded columns are running totals till that day. A blank PDI chassis that stopped showing as blank when its dealer was checked counts as updated.
+        Found counts blank PDI and Stock Inventory chassis. Shaded columns are running totals till that day. A blank PDI chassis that stopped showing as blank when its dealer was checked counts as updated.
       </div>`;
 }
 
-// "71 of 79 chassis updated": the blank PDI chassis plus the day's In-Transit vehicles, when there are any.
+// "71 of 79 chassis updated": the blank PDI chassis plus the day's In-Transit vehicles, when there are any;
+// only the In-Transit vehicles while the PDI section is hidden.
 function headline(done: number, blank: number, meta: ReportMeta): string {
   const it = meta.inTransit;
   if (!it) return `${done} of ${blank} blank chassis ${meta.dryRun ? 'filled' : 'updated'}`;
+  if (hidePdi(meta)) return `${it.updated} of ${it.found} chassis VIN ${meta.dryRun ? 'filled' : 'updated'}`;
   return `${done + it.updated} of ${blank + it.found} chassis ${meta.dryRun ? 'filled' : 'updated'}`;
+}
+
+// Chassis that need attention: the blank PDI ones (unless hidden), then the In-Transit ones, marked
+// "Stock Inventory:" when shown next to blank PDI chassis.
+function problemRowsOf(results: ResultRow[], meta: ReportMeta): ResultRow[] {
+  const bad = (r: ResultRow) => ['missing', 'error'].includes(outcomeOf(r));
+  const it = (meta.inTransitRows ?? []).filter(bad);
+  if (hidePdi(meta)) return it;
+  return [...results.filter(bad), ...it.map((r) => ({ ...r, Status: `Stock Inventory: ${r.Status}` }))];
 }
 
 function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: ReportMeta, masterAttached = false): string {
@@ -151,12 +168,9 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
       </tr>`;
   }).join('');
 
-  // In-Transit problems are listed too, marked "In-Transit:" so they aren't taken for blank PDI chassis.
-  const problems = [
-    ...results.filter((r) => ['missing', 'error'].includes(outcomeOf(r))),
-    ...(meta.inTransitRows ?? []).filter((r) => ['missing', 'error'].includes(outcomeOf(r))).map((r) => ({ ...r, Status: `In-Transit: ${r.Status}` })),
-  ];
-  const failedDealers = summary.filter((s) => s.failed);
+  const hide = hidePdi(meta);
+  const problems = problemRowsOf(results, meta);
+  const failedDealers = hide ? [] : summary.filter((s) => s.failed);
   const problemRows = [
     ...failedDealers.map((s) => `<tr><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;">${esc(s.dealer)}</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;">-</td><td style="${font}padding:6px 10px;border-bottom:1px solid #eeede8;font-size:12px;color:#d03b3b;">Dealer failed: ${esc(s.failed)}</td></tr>`),
     ...problems.slice(0, 50).map((r) => {
@@ -171,7 +185,7 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
          ${problemRows}
        </table>
        ${problems.length > 50 ? `<p style="${font}font-size:12px;color:#52514e;">...and ${problems.length - 50} more; see the attached Excel.</p>` : ''}`
-    : `<p style="${font}font-size:14px;color:#0ca30c;margin:24px 0 0;">No errors: every ${meta.inTransit ? 'blank and In-Transit ' : 'blank '}chassis was ${meta.dryRun ? 'filled' : 'updated'}.</p>`;
+    : `<p style="${font}font-size:14px;color:#0ca30c;margin:24px 0 0;">No errors: every ${hide ? 'Stock Inventory ' : meta.inTransit ? 'blank and Stock Inventory ' : 'blank '}chassis was ${meta.dryRun ? 'filled' : 'updated'}.</p>`;
 
   const doneLabel = meta.dryRun ? 'Filled (dry run)' : 'Updated';
   const doneValue = meta.dryRun ? t.dryrun : t.updated;
@@ -179,33 +193,35 @@ function buildEmailHtml(summary: DealerSummary[], results: ResultRow[], meta: Re
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f3ef;"><tr><td align="center" style="padding:20px 10px;">
   <table width="680" cellpadding="0" cellspacing="0" style="max-width:680px;width:100%;">
     <tr><td style="${font}background:#16325c;color:#ffffff;border-radius:12px 12px 0 0;padding:20px 22px;">
-      <div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;opacity:.75;">River DMS · ${esc(titleOf(meta))}</div>
+      <div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;opacity:.75;">River DMS · ${esc(hide ? titleOf(meta).replace(/\s·\s\d+ run\(s\)$/, '') : titleOf(meta))}</div>
       <div style="font-size:22px;font-weight:700;margin-top:4px;">${headline(doneValue, t.blank, meta)}</div>
-      ${meta.inTransit ? `<div style="font-size:13px;opacity:.85;margin-top:4px;">PDI blank ${doneValue}/${t.blank} · In-Transit ${meta.inTransit.updated}/${meta.inTransit.found}</div>` : ''}
-      <div style="font-size:13px;opacity:.85;margin-top:6px;">${meta.dryRun ? '<b style="background:#2a78d6;padding:2px 8px;border-radius:10px;">DRY RUN, nothing saved</b> · ' : ''}${esc(fmtTime(meta.finishedAt))} · ${minutes(meta)} min · ${t.dealers} dealer(s)</div>
+      ${meta.inTransit && !hide ? `<div style="font-size:13px;opacity:.85;margin-top:4px;">PDI blank ${doneValue}/${t.blank} · Stock Inventory VIN ${meta.inTransit.updated}/${meta.inTransit.found}</div>` : ''}
+      <div style="font-size:13px;opacity:.85;margin-top:6px;">${meta.dryRun ? '<b style="background:#2a78d6;padding:2px 8px;border-radius:10px;">DRY RUN, nothing saved</b> · ' : ''}${esc(fmtTime(meta.finishedAt))} · ${minutes(meta)} min${hide ? '' : ` · ${t.dealers} dealer(s)`}</div>
     </td></tr>
     <tr><td style="background:#fcfcfb;padding:12px 16px 22px;border-radius:0 0 12px 12px;">
+      ${hide ? '' : `
       <h3 style="${font}font-size:15px;color:#0b0b0b;margin:8px 0 4px;">PDI</h3>
       <table width="100%" cellpadding="0" cellspacing="0"><tr>
         ${tile(t.blank, 'Blank chassis found', '#16325c')}
         ${tile(doneValue, doneLabel, meta.dryRun ? '#2a78d6' : '#0ca30c')}
         ${tile(t.missing, 'No usable VIN data', '#fab219')}
         ${tile(t.error + t.failedDealers, 'Errors', '#d03b3b')}
-      </tr></table>
+      </tr></table>`}
       ${meta.inTransit ? `
-      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 4px;">In-Transit</h3>
+      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:${hide ? 8 : 20}px 0 4px;">${IT_LABEL}</h3>
       <table width="100%" cellpadding="0" cellspacing="0"><tr>
         ${tile(meta.inTransit.found, 'Total chassis found', '#16325c')}
-        ${tile(meta.inTransit.updated, 'In-Transit updated', '#0ca30c')}
+        ${tile(meta.inTransit.updated, 'VIN Updated', '#0ca30c')}
         ${tile(meta.inTransit.missing, 'No usable VIN data', '#fab219')}
         ${tile(meta.inTransit.error, 'Errors', '#d03b3b')}
       </tr></table>` : ''}
       ${historyHtml(meta.history, font, tile)}
+      ${hide ? '' : `
       <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 8px;">By dealer</h3>
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e3de;border-radius:10px;border-collapse:separate;">
         <tr><th align="left" style="${font}padding:8px 12px;font-size:11px;color:#52514e;text-transform:uppercase;">Dealer</th><th align="right" style="${font}padding:8px 12px;font-size:11px;color:#52514e;text-transform:uppercase;">Blank</th><th align="left" style="${font}padding:8px 12px;font-size:11px;color:#52514e;text-transform:uppercase;">Outcome</th></tr>
         ${dealerRows}${cleanRow}
-      </table>
+      </table>`}
       ${problemsHtml}
       <p style="${font}font-size:12px;color:#52514e;margin:22px 0 0;line-height:1.5;">
         The full chassis list is in the attached Excel${masterAttached ? '; PDI_Master.xlsx has the day-wise Tracking sheet and the last 3 days\' chassis' : ''}.<br/>
@@ -270,7 +286,7 @@ td.mono{font-family:Consolas,'Cascadia Mono',monospace;font-size:12px}
 
 function buildDashboardHtml(summary: DealerSummary[], results: ResultRow[], meta: ReportMeta): string {
   const data = {
-    meta: { dryRun: meta.dryRun, finished: fmtTime(meta.finishedAt), minutes: minutes(meta), vinFile: path.basename(meta.vinFile), inTransit: meta.inTransit ?? null },
+    meta: { dryRun: meta.dryRun, finished: fmtTime(meta.finishedAt), minutes: minutes(meta), vinFile: path.basename(meta.vinFile), inTransit: meta.inTransit ?? null, hidePdi: hidePdi(meta), itLabel: IT_LABEL },
     outcomes: OUTCOMES,
     dealers: summary.map((s) => ({ dealer: s.dealer, failed: s.failed || '', total: s.total, counts: s.counts })),
     rows: results.map((r) => ({ dealer: r.Dealer, chassis: r.ChassisNo, blank: r.BlankFields, engine: r.EngineNo, battery: r.BatteryDetails, charger: r.VehicleChargerNo, status: r.Status, outcome: outcomeOf(r) })),
@@ -288,17 +304,17 @@ ${DASH_CSS}</style></head>
   <div><div class="eyebrow">River DMS · ${esc(titleOf(meta))}</div><h1 id="headline"></h1><div class="sub" id="sub"></div></div>
   <button class="theme" id="theme" type="button" aria-label="Toggle dark mode">Theme</button>
 </header>
-<h2 class="sect">PDI</h2>
+<h2 class="sect" id="pdiHead">PDI</h2>
 <section class="tiles" id="tiles"></section>
-<h2 class="sect" id="itHead" hidden>In-Transit</h2>
+<h2 class="sect" id="itHead" hidden>${IT_LABEL}</h2>
 <section class="tiles" id="itTiles" hidden></section>
 <section class="card errbox" id="dealerErrors" hidden><h2>Dealers that failed</h2><ul id="dealerErrList"></ul></section>
-<section class="card">
+<section class="card" id="pdiDealers">
   <h2>Outcome by dealer</h2><div class="hint">Click a dealer to filter the table below. Hover a segment for its count.</div>
   <div class="legend" id="legend"></div>
   <div id="dealers"></div>
 </section>
-<section class="card">
+<section class="card" id="pdiChassis">
   <h2>Chassis details</h2>
   <div class="filters" id="outcomeFilters"></div>
   <div class="filters"><input type="search" id="q" placeholder="Search chassis, engine, battery, charger or status..."><span class="count" id="count"></span></div>
@@ -330,12 +346,17 @@ const done = D.meta.dryRun ? sum('dryrun') : sum('updated');
 const pct = (n) => total ? Math.round((n / total) * 100) + '%' : '-';
 
 const ITm = D.meta.inTransit;
-$('headline').textContent = ITm
+const hide = D.meta.hidePdi;
+$('headline').textContent = hide
+  ? ITm.updated + ' of ' + ITm.found + ' chassis VIN ' + (D.meta.dryRun ? 'filled' : 'updated')
+  : ITm
   ? (done + ITm.updated) + ' of ' + (total + ITm.found) + ' chassis ' + (D.meta.dryRun ? 'filled' : 'updated')
   : done + ' of ' + total + ' blank chassis ' + (D.meta.dryRun ? 'filled' : 'updated');
 $('sub').innerHTML = (D.meta.dryRun ? '<span class="badge">DRY RUN, nothing saved</span>' : '') +
-  (ITm ? 'PDI blank ' + done + '/' + total + ' · In-Transit ' + ITm.updated + '/' + ITm.found + ' · ' : '') +
-  esc(D.meta.finished) + ' · ' + D.meta.minutes + ' min · ' + D.dealers.length + ' dealer(s)';
+  (ITm && !hide ? 'PDI blank ' + done + '/' + total + ' · Stock Inventory VIN ' + ITm.updated + '/' + ITm.found + ' · ' : '') +
+  esc(D.meta.finished) + ' · ' + D.meta.minutes + ' min' + (hide ? '' : ' · ' + D.dealers.length + ' dealer(s)');
+// The blank PDI section is hidden for now (see IT_LABEL in pdiReport.ts).
+if (hide) ['pdiHead', 'tiles', 'pdiDealers', 'pdiChassis'].forEach((id) => { $(id).style.display = 'none'; });
 
 const tiles = [
   { v: total, l: 'Blank chassis found', a: 'var(--brand)', p: D.dealers.length + ' dealer(s) checked' },
@@ -347,12 +368,12 @@ const tileHtml = (list) => list.map((t) => '<div class="tile" style="--accent:' 
 $('tiles').innerHTML = tileHtml(tiles);
 const IT = D.meta.inTransit;
 if (IT) {
-  const itPct = (n) => IT.found ? Math.round((n / IT.found) * 100) + '% of In-Transit' : '-';
+  const itPct = (n) => IT.found ? Math.round((n / IT.found) * 100) + '% of found' : '-';
   $('itHead').hidden = false;
   $('itTiles').hidden = false;
   $('itTiles').innerHTML = tileHtml([
-    { v: IT.found, l: 'Total chassis found', a: 'var(--brand)', p: 'In-Transit vehicles to update' },
-    { v: IT.updated, l: 'In-Transit updated', a: 'var(--good)', p: itPct(IT.updated) },
+    { v: IT.found, l: 'Total chassis found', a: 'var(--brand)', p: 'Stock Inventory vehicles to update' },
+    { v: IT.updated, l: 'VIN Updated', a: 'var(--good)', p: itPct(IT.updated) },
     { v: IT.missing, l: 'No usable VIN data', a: 'var(--warn)', p: itPct(IT.missing) },
     { v: IT.error, l: 'Errors', a: 'var(--crit)', p: itPct(IT.error) },
   ]);
@@ -663,8 +684,9 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
   }
   // Sent whether or not the run fully passed: problems are listed under "Needs attention" and
   // flagged in the subject.
+  // The blank PDI problems count only while that section is shown.
   const problems = [
-    ...problemsOf(results, failed, meta.dryRun),
+    ...(hidePdi(meta) ? [] : problemsOf(results, failed, meta.dryRun)),
     ...problemsOf(meta.inTransitRows ?? [], [], meta.dryRun),
   ];
   const user = process.env.GMAIL_USER;
@@ -678,9 +700,11 @@ export async function sendPdiReport(results: ResultRow[], failed: FailedDealer[]
   const t = totals(summary);
   const done = meta.dryRun ? t.dryrun : t.updated;
   const it = meta.inTransit;
-  let subject = `${meta.title ? meta.title + ' - ' : 'PDI details '}${meta.dryRun ? '[DRY RUN] filled' : 'updated'}: ` +
-    (it ? `${done + it.updated}/${t.blank + it.found} (PDI blank ${done}/${t.blank}, In-Transit ${it.updated}/${it.found})` : `${done}/${t.blank}`) +
-    ` across ${t.dealers} dealer(s)` +
+  let subject = (it && hidePdi(meta)
+    ? `${IT_LABEL} - VIN ${meta.dryRun ? '[DRY RUN] filled' : 'updated'}: ${it.updated}/${it.found}`
+    : `${meta.title ? meta.title + ' - ' : 'PDI details '}${meta.dryRun ? '[DRY RUN] filled' : 'updated'}: ` +
+      (it ? `${done + it.updated}/${t.blank + it.found} (PDI blank ${done}/${t.blank}, Stock Inventory VIN ${it.updated}/${it.found})` : `${done}/${t.blank}`) +
+      ` across ${t.dealers} dealer(s)`) +
     `${problems.length ? ` - ${problems.length} need attention` : ''} - ${meta.finishedAt.toISOString().slice(0, 10)}`;
   // PDI_CC (the PDI audience) only on real runs; a dry run goes to GMAIL_TO alone. PDI_EMAIL_REVIEW=1
   // also sends to GMAIL_TO alone, marked [REVIEW], so the owner can check it before it goes to everyone.
