@@ -194,6 +194,14 @@ class Portal:
         downloads = []
         viewer.on("download", lambda d: downloads.append(d))
         viewer.on("dialog", lambda d: d.accept())
+        # Headless, Export to Excel can hand the file over in another window; catch it there too.
+        context = viewer.context
+
+        def watch(pg: Page) -> None:
+            pg.on("download", lambda d: downloads.append(d))
+            pg.on("dialog", lambda d: d.accept())
+
+        context.on("page", watch)
         try:
             download = self._wait_for_export(viewer, downloads)
             target = DOWNLOAD_DIR / f"{export_name(name, period)}{Path(download.suggested_filename).suffix or '.xlsx'}"
@@ -202,7 +210,10 @@ class Portal:
             log(f"Saved {target.name}")
             return target
         finally:
-            viewer.close()
+            context.remove_listener("page", watch)
+            for pg in context.pages:
+                if pg != self.page:
+                    pg.close()
 
     def _wait_for_export(self, viewer: Page, downloads: list):
         # Over 1000 rows the viewer shows a "record display limit" message and downloads the
@@ -215,24 +226,39 @@ class Portal:
             except PWTimeout:
                 return False
 
-        deadline = time.time() + 300
+        def wait_download(seconds: int) -> bool:
+            end = time.time() + seconds
+            while time.time() < end:
+                if downloads:
+                    return True
+                viewer.wait_for_timeout(1000)
+            return False
+
+        # The download is caught by the listeners in export(), from whichever window it comes.
+        # A click on Export to Excel while the grid is still settling can be ignored, so the
+        # button is clicked again (up to 3 times) when no file arrives.
+        deadline = time.time() + 420
+        clicks = 0
         while time.time() < deadline:
             if downloads:
                 return downloads[0]
             if showing(viewer.get_by_text(re.compile("record display limit", re.I))):
-                viewer.wait_for_timeout(15000)
-                if downloads:
+                if wait_download(15):
                     return downloads[0]
-                with viewer.expect_download(timeout=180000) as dl:
-                    viewer.get_by_role("link", name="click here").click(no_wait_after=True)
-                return dl.value
+                viewer.get_by_role("link", name="click here").click(no_wait_after=True)
+                if wait_download(180):
+                    return downloads[0]
+                raise RuntimeError("Clicked 'click here' but no Excel file arrived within 3 minutes.")
             export_btn = viewer.get_by_role("button", name="Export to Excel")
-            if showing(export_btn):
-                with viewer.expect_download(timeout=180000) as dl:
-                    export_btn.click(no_wait_after=True)
-                return dl.value
+            if clicks < 3 and showing(export_btn):
+                clicks += 1
+                export_btn.click(no_wait_after=True)
+                if wait_download(90):
+                    return downloads[0]
+                log(f"No file after Export to Excel (try {clicks} of 3)")
+                continue
             viewer.wait_for_timeout(1000)
-        raise RuntimeError("Report viewer produced neither a grid nor a download within 5 minutes.")
+        raise RuntimeError("Report viewer produced no Excel download within 7 minutes.")
 
 
 def download_reports(today: date) -> dict[tuple[str, str], Path]:
