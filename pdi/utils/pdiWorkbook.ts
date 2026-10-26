@@ -195,7 +195,7 @@ function addHistory(wb: ExcelJS.Workbook, history: PdiHistory) {
   ws.getCell('A1').alignment = { vertical: 'middle', indent: 1 };
   ws.getRow(1).height = 32;
   ws.mergeCells('A2:H2');
-  ws.getCell('A2').value = `${history.since} to ${now.day} · ${history.days.length} day(s) · PDI + Stock Inventory · a blank PDI chassis that stopped showing as blank when its dealer was checked counts as updated`;
+  ws.getCell('A2').value = `${history.days.length} day(s) · PDI + Stock Inventory · a blank PDI chassis that stopped showing as blank when its dealer was checked counts as updated`;
   ws.getCell('A2').font = { color: { argb: INK2 } };
   ws.getCell('A2').alignment = { indent: 1 };
 

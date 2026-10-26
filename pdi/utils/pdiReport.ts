@@ -98,7 +98,7 @@ function historyHtml(history: PdiHistory | undefined, font: string, tile: (v: nu
     </tr>`;
   }).join('');
   return `
-      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 4px;">Till now · ${esc(fmtDay(history.since!))} to ${esc(fmtDay(now.day))} · PDI + Stock Inventory</h3>
+      <h3 style="${font}font-size:15px;color:#0b0b0b;margin:20px 0 4px;">Till now · PDI + Stock Inventory</h3>
       <table width="100%" cellpadding="0" cellspacing="0"><tr>
         ${tile(now.totalFound, 'Total chassis found', '#16325c')}
         ${tile(now.totalUpdated, 'Total chassis updated', '#0ca30c')}

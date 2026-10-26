@@ -34,7 +34,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write   # pdiSync.js sends the shared PDI results to the pdi-runs branch
   actions: read     # the daily email's wait for other PDI runs
 
 jobs:
@@ -120,22 +120,11 @@ jobs:
           key: pdi-state-${{ github.run_id }}
           restore-keys: pdi-state-
 
-      # Runs made from a PC (npm run test:pdi) send their run files to the pdi-runs branch
-      # ("pdi/scripts/pdiPushRuns.js"); add any not seen yet so the daily file and email include them.
-      - name: Add PDI runs made from a PC
-        run: |
-          git fetch --depth=1 origin pdi-runs 2>/dev/null || { echo "No pdi-runs branch, no PC runs to add."; exit 0; }
-          mkdir -p "Output/PDI runs"
-          for f in $(git ls-tree --name-only FETCH_HEAD runs/); do
-            n=$(basename "$f")
-            [ -e "Output/PDI runs/$n" ] && continue
-            git show "FETCH_HEAD:$f" > "Output/PDI runs/$n"
-            echo "Added PC run $n"
-          done
-          if git cat-file -e FETCH_HEAD:history/PDI_History.json 2>/dev/null; then
-            git show FETCH_HEAD:history/PDI_History.json > "$RUNNER_TEMP/pc_history.json"
-            node "pdi/scripts/pdiMergeHistory.js" Output/PDI_History.json "$RUNNER_TEMP/pc_history.json"
-          fi
+      # Take what a PC (npm run test:pdi*, report:pdi-daily) added to the pdi-runs branch: run files,
+      # "emailed today" marker and histories ("pdi/scripts/pdiSync.js"), so the daily file, "till now"
+      # totals and email are the same whichever side builds them.
+      - name: Take PDI results from the pdi-runs branch
+        run: node "pdi/scripts/pdiSync.js" --pull
 
       # PDI.spec.ts is off for now: the Inventory Stock Details run below covers the blank vehicles as River User.
       # - name: PDI fill and Save
@@ -151,6 +140,11 @@ jobs:
       - name: Daily PDI email
         if: env.TASK == 'daily-email'
         run: npx playwright test "pdi/PDIDailyReport.spec.ts" --reporter=line
+
+      # This run's files, the merged histories and any "emailed today" marker go back, for the PC.
+      - name: Send PDI results to the pdi-runs branch
+        if: ${{ !cancelled() }}
+        run: node "pdi/scripts/pdiSync.js"
 
       - name: Save PDI state for the next run
         uses: actions/cache/save@v5

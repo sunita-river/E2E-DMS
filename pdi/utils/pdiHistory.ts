@@ -61,6 +61,16 @@ function summarize(store: Store): PdiHistory {
 
 const toStored = (rows: ResultRow[]): StoredRow[] => rows.map((r) => [r.Dealer ?? '', r.ChassisNo ?? '', outcomeOf(r)]);
 
+// By dealer + chassis no: the newer result wins, except that an updated chassis stays updated.
+function combine(stored: StoredRow[], fresh: StoredRow[]): StoredRow[] {
+  const rows = new Map(stored.map((r) => [`${r[0]}|${r[1]}`, r]));
+  for (const r of fresh) {
+    const key = `${r[0]}|${r[1]}`;
+    if (rows.get(key)?.[2] !== 'updated') rows.set(key, r);
+  }
+  return [...rows.values()];
+}
+
 export interface HistoryEntry { day: string; rows: ResultRow[]; failed: string[]; checked: string[]; inTransit: ResultRow[] }
 
 // Saves (or replaces) the given days in the history file and returns the summary over all days.
@@ -68,8 +78,15 @@ export interface HistoryEntry { day: string; rows: ResultRow[]; failed: string[]
 // days stored without them, i.e. days whose PDI_Daily file is already gone.
 export function recordPdiHistory(file: string, entries: HistoryEntry[], inTransitAll: ResultRow[] = []): PdiHistory {
   const store = load(file);
+  // Combined with what is stored, not replacing it: the stored day may hold the other side's runs
+  // (pdi/scripts/pdiSync.js), which this daily file may not have.
   for (const { day, rows, failed, checked, inTransit } of entries) {
-    store.days[day] = { rows: toStored(rows), failed, checked, inTransit: toStored(inTransit) };
+    const stored = store.days[day];
+    store.days[day] = {
+      rows: combine(stored?.rows ?? [], toStored(rows)), failed,
+      checked: [...new Set([...(stored?.checked ?? []), ...checked])],
+      inTransit: combine(stored?.inTransit ?? [], toStored(inTransit)),
+    };
   }
   const byDay = new Map<string, ResultRow[]>();
   inTransitAll.forEach((r) => { const d = String(r.Day ?? ''); if (d) byDay.set(d, [...(byDay.get(d) ?? []), r]); });

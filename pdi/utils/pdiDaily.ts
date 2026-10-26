@@ -17,7 +17,7 @@ import { recordPdiHistory, PdiHistory, HistoryEntry } from './pdiHistory';
 export const OUTPUT_DIR = process.env.GSTR_OUTPUT_DIR || path.join(process.cwd(), 'Output');
 export const RUNS_DIR = path.join(OUTPUT_DIR, 'PDI runs');
 // In-Transit runs (PDI_Update_InTransit.spec.ts): PDI_InTransit_<UTC yyyy-mm-dd-hh-mm>[_DRYRUN].xlsx, next to
-// the blank-chassis runs (so GitHub's state cache and npm run pdi:push-runs carry them) but counted apart:
+// the blank-chassis runs (so GitHub's state cache and npm run pdi:sync carry them) but counted apart:
 // they only feed the daily report's In-Transit KPIs and sheet, and the master's In-Transit sheet.
 export const IN_TRANSIT_DIR = RUNS_DIR;
 // Every In-Transit chassis ever handled, with its latest result, for the master's In-Transit sheet
