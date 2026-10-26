@@ -54,6 +54,10 @@ SOURCES: list[tuple[str, str | None]] = [
 TOTAL = SOURCES[0][0]
 SOURCE_LABEL = "All Sources"
 SUMMARY_NAME = f"ASMwise_{SOURCE_LABEL.replace(' ', '')}_Summary"  # + _<dd-mm-yyyy>.xlsx
+# The DMS renamed these Enquiry List columns in Oct 2026 (with its own spelling); accept both.
+LEAD_NO = ("Lead No", "Oppurtunity No", "Opportunity No")
+LEAD_SOURCE = ("Lead Source", "Primiry Source", "Primary Source")
+SEC_SOURCE = ("Sec Lead Source", "Secoundry Source", "Secondary Source")
 NO_TEST_RIDE = "Test Ride not taken"
 RETAIL_STATUSES = {"delivered", "invoice", "invoiced"}
 # Any other status (e.g. Cancelled) is counted as neither Booked-Active nor Retail.
@@ -347,7 +351,7 @@ def norm_dealer(v: str) -> str:
 
 
 def enquiry_counts(df: pd.DataFrame) -> pd.DataFrame:
-    dealer, asm, lead = col(df, "Dealer Code"), col(df, "ASM Name"), col(df, "Lead No")
+    dealer, asm, lead = col(df, "Dealer Code"), col(df, "ASM Name"), col(df, *LEAD_NO)
     tr = col(df, "Testride required at")
     df = df.assign(**{dealer: df[dealer].map(norm_dealer),
                       tr: df[tr].replace("", NO_TEST_RIDE)})
@@ -365,7 +369,7 @@ def enquiry_counts(df: pd.DataFrame) -> pd.DataFrame:
 
 def lead_sources(enquiries: list[pd.DataFrame]) -> tuple[dict[str, str], dict[str, str]]:
     """Lead No -> Lead Source, and Sec Lead Source (casefolded) -> its most common Lead Source."""
-    df = pd.concat([e[[col(e, "Lead No"), col(e, "Lead Source"), col(e, "Sec Lead Source")]]
+    df = pd.concat([e[[col(e, *LEAD_NO), col(e, *LEAD_SOURCE), col(e, *SEC_SOURCE)]]
                     .set_axis(["lead", "src", "sec"], axis=1) for e in enquiries])
     df = df[df["src"] != ""]
     by_lead = df.drop_duplicates("lead").set_index("lead")["src"].to_dict()
@@ -431,7 +435,7 @@ def build_summary(files: dict[tuple[str, str], Path], today: date) -> pd.DataFra
     for period in plist:
         enq_df = enquiries[period.label]
         bkg_df = read_export(files[("Booking Master Tracker", period.label)])
-        enq_src = enq_df[col(enq_df, "Lead Source")].str.casefold()
+        enq_src = enq_df[col(enq_df, *LEAD_SOURCE)].str.casefold()
         bkg_src = booking_sources(bkg_df, by_lead, by_sec).str.casefold()
         log(f"{period.label}: {len(enq_df)} enquiry rows, {len(bkg_df)} booking rows "
             f"({int((bkg_src == '').sum())} bookings with no lead source - Total only)")
