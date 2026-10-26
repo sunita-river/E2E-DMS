@@ -46,6 +46,7 @@ export interface PdiWorkbook {
   rows: ResultRow[];        // one per chassis
   rowsSheet: string;        // name of the chassis sheet (the daily report reads it by name)
   dealersSheet?: ResultRow[]; // run files only: one row per dealer checked
+  corrections?: ResultRow[];  // In-Transit run files only: filled vehicles corrected from the VIN sheet (PDI_FIX_VINS)
   inTransit?: { rows: ResultRow[]; summary: InTransitSummary } | undefined; // daily file: the day's In-Transit vehicles
 }
 
@@ -273,6 +274,7 @@ export async function writePdiWorkbook(filePath: string, book: PdiWorkbook): Pro
   addSummary(wb, book);
   addTable(wb, book.rowsSheet, CHASSIS_KEYS, book.rows, 'Status');
   if (book.inTransit) addTable(wb, 'In-Transit', CHASSIS_KEYS, book.inTransit.rows, 'Status');
+  if (book.corrections) addTable(wb, 'Corrections', CHASSIS_KEYS, book.corrections, 'Status');
   if (book.dealersSheet) addTable(wb, 'Dealers', ['Dealer', 'DryRun', 'BlankFound', 'Result'], book.dealersSheet, 'Result');
   try {
     await wb.xlsx.writeFile(filePath);

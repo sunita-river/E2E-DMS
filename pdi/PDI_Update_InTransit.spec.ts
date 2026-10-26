@@ -23,6 +23,12 @@ import { loadVinDetails, updateVehicles, ResultRow, Log } from './utils/pdiVehic
 //
 // Settings (all optional):
 //   PDI_DEALER          only VINs under these Dealer Codes, comma-separated (default: every dealer in the report)
+//   PDI_VINS            only these VINs: comma-separated, or the path of a text file with one per line (to
+//                       rerun the ones that failed); still only those the report shows with a blank detail
+//   PDI_FIX_VINS        VINs to correct from the VIN sheet even though they are already filled (same format):
+//                       e.g. a vehicle holding a charger the sheet has since moved to another VIN, which makes
+//                       the DMS refuse that VIN ("Vehicle Charger No must be unique"). They run first, so the
+//                       numbers they free can be saved on the blank VINs after them. Old values are recorded.
 //   PDI_DRY_RUN         1 = fill the form but don't click Save (for a first check)
 //   PDI_VIN_FILE        VIN Details workbook or CSV (default: same as PDI.spec.ts)
 //   PDI_LOAD_TIMEOUT_S  longest wait for Show / Save to reload the page (default 30)
@@ -149,12 +155,27 @@ test.describe('PDI In-Transit', () => {
     log(`[STEP] Inventory Stock Details saved: ${stockFile}`);
     const { work: all, upToDate } = readStock(stockFile);
 
-    // 2. Work list, narrowed by PDI_DEALER. A VIN that isn't in the VIN sheet has nothing to save, so it is
-    //    reported here without being opened.
-    const wanted = new Set((process.env.PDI_DEALER || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
-    const work = wanted.size ? all.filter((w) => wanted.has(w.dealer)) : all;
+    // 2. Work list, narrowed by PDI_DEALER and PDI_VINS. A VIN that isn't in the VIN sheet has nothing to save,
+    //    so it is reported here without being opened.
+    const list = (s: string) => new Set(s.split(/[,\r\n]+/).map((v) => v.trim().toUpperCase()).filter(Boolean));
+    const vinList = (setting: string) => list(setting && fs.existsSync(setting) ? fs.readFileSync(setting, 'utf8') : setting);
+    const wanted = list(process.env.PDI_DEALER || '');
+    const wantedVins = vinList(process.env.PDI_VINS || '');
+    const fixVins = vinList(process.env.PDI_FIX_VINS || '');
+    const work = all.filter((w) => (!wanted.size || wanted.has(w.dealer)) && (!wantedVins.size || wantedVins.has(w.vin)) && !fixVins.has(w.vin));
+    if (wantedVins.size) {
+      const listed = new Set(all.map((w) => w.vin));
+      const filled = [...wantedVins].filter((v) => !listed.has(v));
+      console.log(`[STEP] PDI_VINS: ${wantedVins.size} VIN(s) asked, ${work.length} still blank in the report` +
+        `${filled.length ? `; not blank any more (nothing to do): ${filled.join(', ')}` : ''}.`);
+    }
     const results: ResultRow[] = [];
     const toUpdate: ResultRow[] = [];
+    // Corrections (PDI_FIX_VINS) are kept apart, on the result file's Corrections sheet, so they don't count
+    // as blank vehicles in the day's numbers. Their dealer comes from the report when they are in stock.
+    const dealerOf = new Map(all.map((w) => [w.vin, w.dealer]));
+    const corrections: ResultRow[] = [...fixVins].map((vin) => ({ Dealer: dealerOf.get(vin) ?? '', ChassisNo: vin, BlankFields: '', EngineNo: '', BatteryDetails: '', VehicleChargerNo: '', Status: '' }));
+    if (corrections.length) console.log(`[STEP] PDI_FIX_VINS: ${corrections.length} filled VIN(s) to correct from the VIN sheet first.`);
     for (const { dealer, vin } of work) {
       const row: ResultRow = { Dealer: dealer, ChassisNo: vin, BlankFields: '', EngineNo: '', BatteryDetails: '', VehicleChargerNo: '', Status: '' };
       if (vinDetails.has(vin)) toUpdate.push(row);
@@ -167,19 +188,26 @@ test.describe('PDI In-Transit', () => {
       `(${upToDate} already filled); ${toUpdate.length} to update as River User.`);
 
     // About 10s per vehicle (Save + re-check), with headroom.
-    test.setTimeout(15 * 60 * 1000 + toUpdate.length * 10 * 1000 * 2);
+    test.setTimeout(15 * 60 * 1000 + (corrections.length + toUpdate.length) * 10 * 1000 * 2);
 
-    // 3. Same session: every vehicle, one after another.
+    // 3. Same session: every vehicle, one after another, corrections first.
     const failures: FailedDealer[] = [];
-    if (toUpdate.length) {
+    if (corrections.length || toUpdate.length) {
       try {
-        results.push(...await updateVehicles(page, loginPage, riverUser, toUpdate, vinDetails, log,
-          { dryRun: DRY_RUN, loadTimeoutMs: LOAD_TIMEOUT, recordBefore: 'Before', relogin: login }));
+        if (corrections.length) {
+          await updateVehicles(page, loginPage, riverUser, corrections, vinDetails, log,
+            { dryRun: DRY_RUN, loadTimeoutMs: LOAD_TIMEOUT, recordBefore: 'Correction, before', relogin: login });
+        }
+        if (toUpdate.length) {
+          results.push(...await updateVehicles(page, loginPage, riverUser, toUpdate, vinDetails, log,
+            { dryRun: DRY_RUN, loadTimeoutMs: LOAD_TIMEOUT, recordBefore: 'Before', relogin: login }));
+        }
       } catch (err) {
         const message = String((err as Error).message).split('\n')[0]!.slice(0, 200);
         failures.push({ dealer: RIVER_USER, error: message });
         log(`[ERROR] Update failed: ${message}`);
-        results.push(...toUpdate.map((r) => ({ ...r, Status: r.Status || `Not attempted: ${message}` })));
+        corrections.forEach((r) => { r.Status ||= `Not attempted: ${message}`; });
+        results.push(...toUpdate.filter((r) => !results.includes(r)).map((r) => ({ ...r, Status: r.Status || `Not attempted: ${message}` })));
         await test.info().attach('river-user-failure.png', {
           body: await page.screenshot({ fullPage: true, timeout: 15000 }).catch(() => Buffer.from('')),
           contentType: 'image/png',
@@ -194,6 +222,7 @@ test.describe('PDI In-Transit', () => {
       title: 'PDI vehicle details (Inventory Stock Details)',
       subtitle: `${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })} · River User ${riverUser.username} · ${dealers.length} dealer(s) · VIN sheet: ${path.basename(VIN_FILE)}`,
       dryRun: DRY_RUN, dealers, failed: failures, rows: results, rowsSheet: 'In-Transit',
+      ...(corrections.length ? { corrections } : {}),
     });
     console.log(`\n[STEP] Results saved to ${file}`);
 
@@ -207,12 +236,17 @@ test.describe('PDI In-Transit', () => {
       }
     }
 
-    const done = results.filter((r) => /^(Updated|Dry run)/.test(r.Status || ''));
+    const isDone = (r: ResultRow) => /^(Updated|Dry run)/.test(r.Status || '');
+    if (corrections.length) {
+      console.log(`[RESULT] Corrections: ${corrections.filter(isDone).length} of ${corrections.length} ${DRY_RUN ? 'filled (dry run, nothing saved)' : 'corrected'}`);
+      corrections.forEach((r) => console.log(`   ${isDone(r) ? 'OK ' : 'NOT'} ${r.ChassisNo}  ${r.BlankFields} -> Engine ${r.EngineNo}, Battery ${r.BatteryDetails}, Charger ${r.VehicleChargerNo}: ${r.Status}`));
+    }
+    const done = results.filter(isDone);
     console.log(`[RESULT] ${results.length} vehicle(s), ${done.length} ${DRY_RUN ? 'filled (dry run, nothing saved)' : 'updated'}`);
     results.filter((r) => !done.includes(r)).forEach((r) => console.log(`   NOT ${DRY_RUN ? 'filled' : 'updated'}: ${r.Dealer} ${r.ChassisNo}  ${r.Status}`));
     // As in PDI.spec.ts, data problems only warn (they are in the report; a rerun can't fix them): not in the
     // VIN sheet, a Save the DMS refuses (e.g. "Battery No must be unique"). Timeouts and page errors fail the run.
-    const problems = splitProblems(problemsOf(results.filter((r) => outcomeOf(r) !== 'missing'), failures, DRY_RUN));
+    const problems = splitProblems(problemsOf([...corrections, ...results].filter((r) => outcomeOf(r) !== 'missing'), failures, DRY_RUN));
     if (problems.length) {
       throw new Error(`${problems.length} problem(s).\n  ${problems.slice(0, 20).join('\n  ')}`);
     }
