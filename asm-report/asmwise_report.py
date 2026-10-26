@@ -164,14 +164,22 @@ class Portal:
         p.locator(f"#{input_id}").click()
         month, target = d.strftime("%B"), (d.year, d.month)
         title = p.locator(".ajax__calendar_title:visible")
+        text = ""
         for _ in range(36):
-            shown = datetime.strptime(re.sub(r"\s+", " ", title.inner_text().replace(",", "")).strip(), "%B %Y")
+            text = re.sub(r"\s+", " ", title.inner_text().replace(",", "")).strip()
+            shown = datetime.strptime(text, "%B %Y")
             if (shown.year, shown.month) == target:
                 break
             p.locator(".ajax__calendar_prev:visible" if (shown.year, shown.month) > target
                       else ".ajax__calendar_next:visible").click()
+            # The title updates after the slide animation; reading it too early made the
+            # loop click again on the stale month and overshoot back and forth.
+            for _ in range(50):
+                p.wait_for_timeout(100)
+                if re.sub(r"\s+", " ", title.inner_text().replace(",", "")).strip() != text:
+                    break
         else:
-            raise RuntimeError(f"Calendar never reached {month} {d.year}")
+            raise RuntimeError(f"Calendar never reached {month} {d.year} (stuck on {text})")
         p.locator(f'.ajax__calendar_day:visible[title*="{month}"]').filter(
             has_text=re.compile(rf"^{d.day}$")).click()
 
