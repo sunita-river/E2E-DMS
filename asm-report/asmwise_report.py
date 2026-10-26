@@ -207,11 +207,19 @@ class Portal:
     def _wait_for_export(self, viewer: Page, downloads: list):
         # Over 1000 rows the viewer shows a "record display limit" message and downloads the
         # Excel itself; otherwise it shows the grid with an "Export to Excel" button.
+        # A big report (YTD) keeps the viewer busy loading, and a visibility check can then hang
+        # until the 30s default timeout; treat that as "not ready yet" instead of failing.
+        def showing(locator) -> bool:
+            try:
+                return locator.is_visible(timeout=5000)
+            except PWTimeout:
+                return False
+
         deadline = time.time() + 300
         while time.time() < deadline:
             if downloads:
                 return downloads[0]
-            if viewer.get_by_text(re.compile("record display limit", re.I)).is_visible():
+            if showing(viewer.get_by_text(re.compile("record display limit", re.I))):
                 viewer.wait_for_timeout(15000)
                 if downloads:
                     return downloads[0]
@@ -219,7 +227,7 @@ class Portal:
                     viewer.get_by_role("link", name="click here").click(no_wait_after=True)
                 return dl.value
             export_btn = viewer.get_by_role("button", name="Export to Excel")
-            if export_btn.is_visible():
+            if showing(export_btn):
                 with viewer.expect_download(timeout=180000) as dl:
                     export_btn.click(no_wait_after=True)
                 return dl.value
