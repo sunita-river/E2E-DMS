@@ -8,7 +8,11 @@ name: PDI
 # on the vin-data branch, and each run reads that file. The team only has to keep the sheet up to date.
 #   - hourly 07:47-17:47 IST: fill and Save as River User from Inventory Stock Details (no email)
 #   - daily 19:17 IST: the day's one PDI email, covering all of that day's runs
-# GitHub may start scheduled runs some minutes late.
+# GitHub's own schedule skips many runs (whole days in Oct 2026), so each run starts the next one itself:
+# the "next" job waits for the next slot and starts it with workflow_dispatch, and overnight it starts a
+# "wait" run every 5h20m (GitHub stops a job at 6 h) that only keeps this chain going. The crons below only
+# restart the chain when it has stopped: a scheduled run does nothing while another PDI run is going.
+run-name: PDI ${{ github.event.inputs.task || (github.event.schedule == '47 13 * * *' && 'daily-email (scheduled)') || 'pdi (scheduled)' }}
 on:
   schedule:
     - cron: '17 2-12 * * *'   # 07:47-17:47 IST, hourly (off :00/:30, when GitHub drops the most scheduled runs)
@@ -18,29 +22,53 @@ on:
       task:
         description: 'What to run'
         type: choice
-        options: [pdi, intransit, daily-email]
+        options: [pdi, intransit, daily-email, wait]
         default: pdi
       dealers:
         description: 'Only these dealer codes, comma-separated (blank = all PDI dealers)'
         required: false
         default: ''
 
-# One PDI job at a time: an hourly run still going makes the next one wait instead of overlapping,
-# and each job sees the state the previous one saved. GitHub keeps only one waiting run per group,
-# so the daily email has its own group (else it would cancel a waiting hourly run) and instead waits
-# itself for any PDI run still going or queued (first step below).
-concurrency:
-  group: ${{ (github.event.inputs.task == 'daily-email' || github.event.schedule == '47 13 * * *') && 'pdi-email' || 'pdi' }}
-  cancel-in-progress: false
-
 permissions:
   contents: write   # pdiSync.js sends the shared PDI results to the pdi-runs branch
-  actions: read     # the daily email's wait for other PDI runs
+  actions: write    # the daily email's wait for other PDI runs, and the "next" job starting the next run
 
 jobs:
+  # A scheduled run only restarts a stopped chain: while another PDI run is going, its "next" job
+  # already covers this slot.
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          go=true
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            others=$(gh run list -R "$GITHUB_REPOSITORY" --workflow pdi.yml --limit 20 --json databaseId,status \
+              --jq "[.[] | select(.databaseId != $GITHUB_RUN_ID and .status != \"completed\")] | length")
+            if [ "$others" != "0" ]; then
+              go=false
+              echo "Another PDI run is going and starts this slot's run itself, nothing to do."
+            fi
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+
   pdi:
+    needs: check
+    if: needs.check.outputs.go == 'true' && github.event.inputs.task != 'wait'
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    # One PDI job at a time: an hourly run still going makes the next one wait instead of overlapping,
+    # and each job sees the state the previous one saved. GitHub keeps only one waiting job per group,
+    # so the daily email has its own group (else it would cancel a waiting hourly run) and instead waits
+    # itself for any PDI job still going or queued (first step below).
+    concurrency:
+      group: ${{ (github.event.inputs.task == 'daily-email' || github.event.schedule == '47 13 * * *') && 'pdi-email' || 'pdi' }}
+      cancel-in-progress: false
     env:
       CI: '1'
       TZ: Asia/Kolkata                 # "today" for the daily file and email, in Indian time
@@ -55,14 +83,20 @@ jobs:
       TASK: ${{ github.event.inputs.task || (github.event.schedule == '47 13 * * *' && 'daily-email') || 'pdi' }}
     steps:
       # The email must include the day's last hourly run, so wait (up to 130 min) for PDI runs still going or queued.
+      # A run whose "pdi" job is done (or skipped) and only its "next" job is waiting does not count.
       - name: Wait for PDI runs still going
         if: env.TASK == 'daily-email'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           for i in $(seq 1 26); do
-            busy=$(gh run list -R "$GITHUB_REPOSITORY" --workflow pdi.yml --limit 20 --json databaseId,status \
-              --jq "[.[] | select(.databaseId != $GITHUB_RUN_ID and (.status | test(\"in_progress|queued|pending|waiting|requested\")))] | length")
+            busy=0
+            for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow pdi.yml --limit 20 --json databaseId,status \
+                --jq ".[] | select(.databaseId != $GITHUB_RUN_ID and .status != \"completed\") | .databaseId"); do
+              done_pdi=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs" \
+                --jq '[.jobs[] | select(.name == "pdi" and .status == "completed")] | length')
+              [ "$done_pdi" = "0" ] && busy=$((busy + 1))
+            done
             [ "$busy" = "0" ] && { echo "No other PDI run going."; exit 0; }
             echo "$busy PDI run(s) still going or queued, checking again in 5 min."
             sleep 300
@@ -176,3 +210,49 @@ jobs:
             test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  # Starts the next slot's run (07:47-17:47 hourly, 19:17 email, IST), counted from when this run was
+  # created so a long run still starts the next slot straight away. Slots more than 5h20m away get a
+  # "wait" run instead. Stops when a newer PDI run is going: that run's own "next" job takes over.
+  next:
+    needs: [check, pdi]
+    if: ${{ !cancelled() && needs.check.outputs.go == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    env:
+      TZ: Asia/Kolkata
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Wait for the next slot and start its run
+        run: |
+          created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+          base=$(( $(date -d "$created" +%s) + 300 ))
+          for d in 0 1; do
+            day=$(date -d "$(date -d "@$base" +%F) +$d day" +%F)
+            for t in 07:47 08:47 09:47 10:47 11:47 12:47 13:47 14:47 15:47 16:47 17:47 19:17; do
+              slot=$(date -d "$day $t" +%s)
+              if [ "$slot" -gt "$base" ]; then
+                task=pdi; [ "$t" = "19:17" ] && task=daily-email
+                break 2
+              fi
+            done
+          done
+          left=$(( slot - $(date +%s) ))
+          if [ "$left" -gt 19200 ]; then
+            echo "Next slot $(date -d "@$slot" '+%d-%m %H:%M') IST is more than 5h20m away, starting a wait run in 5h20m."
+            task=wait; sleep 19200
+          elif [ "$left" -gt 0 ]; then
+            echo "Next slot $(date -d "@$slot" '+%d-%m %H:%M') IST ($task), waiting $((left / 60)) min."
+            sleep "$left"
+          fi
+          newer() {
+            gh run list -R "$GITHUB_REPOSITORY" --workflow pdi.yml --limit 20 --json databaseId,status \
+              --jq "[.[] | select(.databaseId > $GITHUB_RUN_ID and .status != \"completed\")] | length"
+          }
+          # A newer scheduled run that has nothing to do ends within a minute, so look twice.
+          if [ "$(newer)" != "0" ]; then
+            sleep 90
+            [ "$(newer)" != "0" ] && { echo "A newer PDI run is going and starts the next slot, stopping here."; exit 0; }
+          fi
+          gh workflow run pdi.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f task="$task"
+          echo "Started the $task run."
