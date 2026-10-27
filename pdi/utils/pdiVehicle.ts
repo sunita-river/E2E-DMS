@@ -11,7 +11,9 @@ import { OUTPUT_DIR } from './pdiDaily';
 export type ResultRow = Record<string, string>;
 export type Log = (message: string) => void;
 
-export const EDIT_REASON = 'Details updated';
+// Reason the DMS records with each Save, dated (local date, dd-mm-yyyy) so automated edits can be told apart.
+export const editReason = (d = new Date()) =>
+  `Added via Automation ${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
 export const MODIFY_VEHICLE_URL = 'Common/ChangeChassisNo.aspx';
 const SETTLE_MS = 1000;
 
@@ -222,7 +224,7 @@ export async function updateVehicles(page: Page, loginPage: LoginPage, dealer: U
       if (onlyChanged && same) return noteText ? `${noteText}; the rest already correct` : 'Already correct';
       return `${noteText || 'VIN sheet has no usable values'}, nothing saved`;
     }
-    await page.locator('[name="ctl00$cpMain$EditChassisReason"]').fill(EDIT_REASON);
+    await page.locator('[name="ctl00$cpMain$EditChassisReason"]').fill(editReason());
     if (dryRun) return noteText ? `${noteText}; the rest filled (dry run)` : 'Dry run: filled, not saved';
 
     lastDialog = '';
