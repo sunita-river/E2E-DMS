@@ -188,16 +188,34 @@ test.describe('VIN master update', () => {
         await loginPage.loginAsRiverUser(riverUser);
         await loginPage.verifyDashboard();
       };
-      await login();
+      // A session whose window has closed stops here; its unfinished VINs go back to the shared queue for the
+      // other sessions (a run with no session left ends, and the next run picks them up from the progress file).
+      const closed = (err?: unknown) => lanePage.isClosed() || /has been closed/i.test(String((err as Error)?.message));
+      const stop = (unfinished: string[], err?: unknown) => {
+        queue.unshift(...unfinished);
+        log(`[ERROR] Session ${lane} stopped: its window was closed${err ? ` (${String((err as Error).message).split('\n')[0]})` : ''}; ` +
+          `${unfinished.length} VIN(s) handed back to the other sessions.`);
+      };
+      try {
+        await login();
+      } catch (err) {
+        if (closed(err)) { stop([], err); return; }
+        throw err;
+      }
       for (let batch = queue.splice(0, BATCH); batch.length; batch = queue.splice(0, BATCH)) {
         const rows: ResultRow[] = batch.map((vin) => ({ Dealer: '', ChassisNo: vin, BlankFields: '', EngineNo: '', BatteryDetails: '', VehicleChargerNo: '', Status: '' }));
+        const finished = new Set<string>();
+        const onRow = record(lane);
         try {
           results.push(...await updateVehicles(lanePage, loginPage, riverUser, rows, vinDetails, log,
-            { dryRun: DRY_RUN, loadTimeoutMs: LOAD_TIMEOUT, onlyChanged: true, relogin: login, onRow: record(lane) }));
+            { dryRun: DRY_RUN, loadTimeoutMs: LOAD_TIMEOUT, onlyChanged: true, relogin: login, onRow: (r) => { finished.add(r.ChassisNo!); onRow(r); } }));
+          if (closed()) { stop(batch.filter((v) => !finished.has(v))); return; }
         } catch (err) {
+          if (closed(err)) { stop(batch.filter((v) => !finished.has(v)), err); return; }
           // Opening Modify vehicle details failed (session gone?): these VINs stay to do, log in again for the next batch.
           log(`[ERROR] Batch of ${batch.length} not finished: ${String((err as Error).message).split('\n')[0]}; logging in again`);
           await login().catch((e) => log(`[ERROR] Login failed: ${String((e as Error).message).split('\n')[0]}`));
+          if (closed()) { stop([]); return; }
         }
       }
     };
