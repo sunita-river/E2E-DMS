@@ -122,6 +122,11 @@ export interface UpdateOptions {
   // Set when the fields may already hold values: their old values are written to row.BlankFields
   // after this label (e.g. "Correction, before"), so the report shows what was overwritten.
   recordBefore?: string;
+  // Only type the fields whose DMS value differs from the VIN sheet; a vehicle that already matches is not
+  // saved ("Already correct"). Also sets row.Before<Field> to the DMS values and row.Changed to the fields saved.
+  onlyChanged?: boolean;
+  // Called as soon as each row has its final Status (e.g. to keep progress of a long run).
+  onRow?: (row: ResultRow) => void;
   // How to log in again if the session drops (default: the dealer login with `dealer`).
   relogin?: () => Promise<void>;
 }
@@ -131,7 +136,7 @@ export interface UpdateOptions {
 // BatteryDetails, VehicleChargerNo and Status in place.
 export async function updateVehicles(page: Page, loginPage: LoginPage, dealer: UserCredentials,
   results: ResultRow[], vinDetails: Map<string, VinDetails>, log: Log, opts: UpdateOptions): Promise<ResultRow[]> {
-  const { dryRun, loadTimeoutMs, recordBefore } = opts;
+  const { dryRun, loadTimeoutMs, recordBefore, onlyChanged } = opts;
   log('[STEP] Opening SETTINGS -> Admin -> Modify vehicle details...');
   await page.getByRole('link', { name: /^\W*SETTINGS\W*$/ }).click();
   await page.getByRole('link', { name: /^\W*Admin\W*$/ }).first().click();
@@ -190,27 +195,33 @@ export async function updateVehicles(page: Page, loginPage: LoginPage, dealer: U
     const loaded = await fieldValue('ChassisNo');
     if (loaded.toUpperCase() !== chassis.toUpperCase()) return `Show did not load this vehicle (got "${loaded}")`;
 
-    if (recordBefore) {
-      const before = await Promise.all(VIN_FIELDS.map(async (f) => `${f.label} ${(await fieldValue(f.field)) || '(empty)'}`));
-      row.BlankFields = `${recordBefore}: ${before.join(', ')}`;
-    }
+    const before: Record<string, string> = {};
+    for (const f of VIN_FIELDS) before[f.field] = await fieldValue(f.field);
+    if (recordBefore) row.BlankFields = `${recordBefore}: ${VIN_FIELDS.map((f) => `${f.label} ${before[f.field] || '(empty)'}`).join(', ')}`;
+    if (onlyChanged) VIN_FIELDS.forEach((f) => { row[`Before${f.field}`] = before[f.field]!; });
 
     // Only real serials are typed in. A VIN-sheet note leaves the DMS field as it is; it is reported when
     // the field is still empty, or always when recording old values (the value left there may be the wrong one).
     const filled: [field: string, value: string][] = [];
     const notes: string[] = [];
+    let same = 0;
     for (const f of VIN_FIELDS) {
       const value = details[f.key];
-      const current = await fieldValue(f.field);
+      const current = before[f.field]!;
       if (isSerial(value)) {
+        if (onlyChanged && current.toUpperCase() === value.toUpperCase()) { same++; continue; }
         await page.locator(`[name="ctl00$cpMain$${f.field}"]`).fill(value);
         filled.push([f.field, value]);
       } else if (!current || recordBefore) {
         notes.push(`${f.label} "${value.replace(/\s+/g, ' ') || 'empty'}"${current ? ` (DMS still has "${current}")` : ''}`);
       }
     }
+    if (onlyChanged) row.Changed = filled.map(([field]) => VIN_FIELDS.find((f) => f.field === field)!.label).join(', ');
     const noteText = notes.length ? `VIN sheet has no usable ${notes.join(', ')}` : '';
-    if (!filled.length) return `${noteText || 'VIN sheet has no usable values'}, nothing saved`;
+    if (!filled.length) {
+      if (onlyChanged && same) return noteText ? `${noteText}; the rest already correct` : 'Already correct';
+      return `${noteText || 'VIN sheet has no usable values'}, nothing saved`;
+    }
     await page.locator('[name="ctl00$cpMain$EditChassisReason"]').fill(EDIT_REASON);
     if (dryRun) return noteText ? `${noteText}; the rest filled (dry run)` : 'Dry run: filled, not saved';
 
@@ -246,6 +257,7 @@ export async function updateVehicles(page: Page, loginPage: LoginPage, dealer: U
       if (!details) {
         row.Status = 'Not in VIN Details sheet';
         log(`[WARN] ${chassis}: not found in VIN Details, skipped.`);
+        opts.onRow?.(row);
         continue;
       }
       row.EngineNo = isSerial(details.motor) ? details.motor : '';
@@ -256,7 +268,7 @@ export async function updateVehicles(page: Page, loginPage: LoginPage, dealer: U
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           row.Status = await updateChassis(row, details);
-          const ok = /^(Updated|Dry run)/.test(row.Status);
+          const ok = /^(Updated|Dry run|Already correct)/.test(row.Status);
           log(ok
             ? `[OK] ${chassis}: Engine ${details.motor}, Battery ${details.battery}, Charger ${details.charger}: ${row.Status}${attempt > 1 ? ' (on retry)' : ''}`
             : `[WARN] ${chassis}: ${row.Status}`);
@@ -276,6 +288,7 @@ export async function updateVehicles(page: Page, loginPage: LoginPage, dealer: U
           }
         }
       }
+      opts.onRow?.(row);
     }
   } finally {
     page.off('dialog', onDialog);
