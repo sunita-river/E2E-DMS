@@ -1,13 +1,14 @@
 name: ASM-wise Report
 
 # Downloads the Enquiry List and Booking Master Tracker exports, builds the ASM-wise summary and
-# mails each ASM in asm-report/Mapping/ASM_Name_Mapping.xlsx, once a day from 08:07 IST; run it by
+# mails each ASM in asm-report/Mapping/ASM_Name_Mapping.xlsx, once a day between 08:00 and 09:00 IST; run it by
 # hand (Actions -> ASM-wise Report -> Run workflow) to preview or to send a test copy to GMAIL_TO.
 #
 # GitHub sometimes drops scheduled runs (on 27-Oct-2026 it skipped every one for the whole morning), so
-# the email is attempted several times: hourly 08:07-11:07 IST here, plus the Apps Script trigger in
-# resources/apps-script/triggerAsmReport.gs (08:00 and 10:00 IST from Google). These "auto" runs mail the
-# ASMs only if no run has sent today's email yet, so the ASMs get it once.
+# the report is started several times: 07:47, 08:07, 08:22 and 08:37 IST here, plus the Apps Script trigger in
+# resources/apps-script/triggerAsmReport.gs (07:00-08:00 IST from Google). These "auto" runs mail the ASMs
+# only between 08:00 and 09:00 IST (a run that is ready early waits for 08:00; none mails after 09:00) and
+# only if no run has sent today's email yet, so the ASMs get it once.
 on:
   workflow_dispatch:
     inputs:
@@ -17,7 +18,8 @@ on:
         options: [test, preview, send, auto]
         default: test
   schedule:
-    - cron: '37 2-5 * * *'    # 08:07, 09:07, 10:07, 11:07 IST (off :00/:30, when GitHub drops the most scheduled runs)
+    - cron: '17,37,52 2 * * *'   # 07:47, 08:07, 08:22 IST (off :00/:30, when GitHub drops the most scheduled runs)
+    - cron: '7 3 * * *'          # 08:37 IST, the last start that can still mail before 09:00
 
 # One run at a time, so a queued auto run sees whether the one before it sent the email.
 concurrency:
@@ -29,7 +31,8 @@ permissions:
   actions: read     # the "already sent today" check reads this workflow's earlier runs
 
 jobs:
-  # Auto runs stop here if a run today (IST) already sent the email (its "Email the ASMs (send|auto)" step succeeded).
+  # Auto runs stop here if it is 09:00 IST or later, or if a run today (IST) already sent the email
+  # (its "Email the ASMs (send|auto)" step succeeded).
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -43,6 +46,10 @@ jobs:
       - id: sent
         run: |
           if [ "$MODE" != auto ]; then echo "sent=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$(date +%H)" -ge 9 ]; then
+            echo "It is $(date +%H:%M) IST - the ASM email goes out only between 08:00 and 09:00 IST."
+            echo "sent=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           since=$(date -u -d "@$(date -d "$(date +%F)" +%s)" +%Y-%m-%dT%H:%M:%SZ)   # today 00:00 IST, in UTC
           # An API error counts as "not sent": better a second email than none.
           sent=false
@@ -117,8 +124,28 @@ jobs:
           done
           exit 1
 
+      # Auto runs mail only between 08:00 and 09:00 IST: wait if the report is ready before 08:00,
+      # skip the email (the step shows as skipped, not sent) if the build finished after 09:00.
+      - name: Wait for the 08:00-09:00 IST send window
+        id: window
+        if: env.MODE == 'auto'
+        run: |
+          now=$(( 10#$(date +%H) * 60 + 10#$(date +%M) ))
+          if [ "$now" -lt 480 ]; then
+            echo "Report ready at $(date +%H:%M) IST - waiting until 08:00 IST to send."
+            sleep $(( (480 - now) * 60 - 10#$(date +%S) ))
+            now=480
+          fi
+          if [ "$now" -ge 540 ]; then
+            echo "::warning::Report ready at $(date +%H:%M) IST, after 09:00 - not sending today's ASM email."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # Only these ASMs for now, with ramkishor@, hemanthkr@ and ashishg@ on Cc; drop ASMS to mail every ASM in the mapping.
       - name: Email the ASMs (${{ env.MODE }})
+        if: env.MODE != 'auto' || steps.window.outputs.ok == 'true'
         run: |
           ASMS=(--asm Santhosh "Narendra Thota" Dinith Akram)
           CC=(--cc ramkishor@rideriver.com hemanthkr@rideriver.com ashishg@rideriver.com)

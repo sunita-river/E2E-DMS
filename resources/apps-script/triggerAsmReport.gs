@@ -1,7 +1,7 @@
-// Starts the ASM-wise Report workflow (.github/workflows/asmwise-report.yml) from Google, every day at
-// 08:00 and 10:00 IST, in case GitHub drops its own scheduled runs (it skipped all of them on 27-Oct-2026).
-// It starts the workflow in "auto" mode, which mails the ASMs only if no run has sent today's email yet,
-// so these extra starts never send it twice.
+// Starts the ASM-wise Report workflow (.github/workflows/asmwise-report.yml) from Google, every day between
+// 07:00 and 08:00 IST, in case GitHub drops its own scheduled runs (it skipped all of them on 27-Oct-2026).
+// It starts the workflow in "auto" mode, which mails the ASMs only between 08:00 and 09:00 IST (waiting for
+// 08:00 if the report is ready early) and only if no run has sent today's email yet, so it is never sent twice.
 //
 // Setup (once):
 //   1. script.google.com > New project (or the project that already holds pushVinToGitHub.gs),
@@ -14,7 +14,7 @@
 //      (it sends nothing if today's email has already gone).
 var ASM_REPO = 'sunita-river/E2E-DMS';
 var ASM_WORKFLOW = 'asmwise-report.yml';
-var ASM_HOURS = [8, 10]; // IST; Google runs each within that hour
+var ASM_HOURS = [7]; // IST; Google runs it within that hour, so the report is ready by 08:00
 
 function triggerAsmReport() {
   var token = PropertiesService.getScriptProperties().getProperty('GITHUB_TOKEN');
