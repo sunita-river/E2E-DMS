@@ -1,27 +1,70 @@
 name: ASM-wise Report
 
 # Downloads the Enquiry List and Booking Master Tracker exports, builds the ASM-wise summary and
-# mails each ASM in asm-report/Mapping/ASM_Name_Mapping.xlsx. Scheduled once a day at 08:00 IST; run it by
+# mails each ASM in asm-report/Mapping/ASM_Name_Mapping.xlsx, once a day from 08:07 IST; run it by
 # hand (Actions -> ASM-wise Report -> Run workflow) to preview or to send a test copy to GMAIL_TO.
+#
+# GitHub sometimes drops scheduled runs (on 27-Oct-2026 it skipped every one for the whole morning), so
+# the email is attempted several times: hourly 08:07-11:07 IST here, plus the Apps Script trigger in
+# resources/apps-script/triggerAsmReport.gs (08:00 and 10:00 IST from Google). These "auto" runs mail the
+# ASMs only if no run has sent today's email yet, so the ASMs get it once.
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'preview = build only, test = all emails to GMAIL_TO, send = mail the ASMs'
+        description: 'preview = build only, test = all emails to GMAIL_TO, send = mail the ASMs, auto = send unless already sent today'
         type: choice
-        options: [test, preview, send]
+        options: [test, preview, send, auto]
         default: test
   schedule:
-    - cron: '30 2 * * *'    # every day 08:00 IST
+    - cron: '37 2-5 * * *'    # 08:07, 09:07, 10:07, 11:07 IST (off :00/:30, when GitHub drops the most scheduled runs)
 
+# One run at a time, so a queued auto run sees whether the one before it sent the email.
 concurrency:
   group: asmwise-report
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  actions: read     # the "already sent today" check reads this workflow's earlier runs
+
 jobs:
-  asmwise:
+  # Auto runs stop here if a run today (IST) already sent the email (its "Email the ASMs (send|auto)" step succeeded).
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 5
+    outputs:
+      sent: ${{ steps.sent.outputs.sent }}
+    env:
+      TZ: Asia/Kolkata
+      MODE: ${{ github.event.inputs.mode || 'auto' }}   # scheduled runs are auto
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - id: sent
+        run: |
+          if [ "$MODE" != auto ]; then echo "sent=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          since=$(date -u -d "@$(date -d "$(date +%F)" +%s)" +%Y-%m-%dT%H:%M:%SZ)   # today 00:00 IST, in UTC
+          # An API error counts as "not sent": better a second email than none.
+          sent=false
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/asmwise-report.yml/runs?created=%3E%3D$since&per_page=100" \
+                   --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | .id" || true)
+          for id in $runs; do
+            done_step=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs" \
+                          --jq '.jobs[].steps[] | select((.name == "Email the ASMs (send)" or .name == "Email the ASMs (auto)") and .conclusion == "success") | .name' || true)
+            if [ -n "$done_step" ]; then
+              echo "Today's ASM email was already sent by run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id"
+              sent=true
+              break
+            fi
+          done
+          [ "$sent" = false ] && echo "Today's ASM email has not been sent yet."
+          echo "sent=$sent" >> "$GITHUB_OUTPUT"
+
+  asmwise:
+    needs: check
+    if: needs.check.outputs.sent != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
     env:
       TZ: Asia/Kolkata                 # "yesterday" in Indian time
       HEADLESS: '1'
@@ -32,7 +75,7 @@ jobs:
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       GMAIL_TO: ${{ secrets.GMAIL_TO }}
       ASM_MAIL_FROM: ${{ secrets.ASM_MAIL_FROM }}
-      MODE: ${{ github.event.inputs.mode || 'send' }}   # scheduled runs send
+      MODE: ${{ github.event.inputs.mode || 'auto' }}   # scheduled runs are auto
     steps:
       - name: Check the DMS can be reached from GitHub
         run: |
@@ -64,8 +107,15 @@ jobs:
           python -c "import json,os; json.load(open(os.environ['CREDENTIALS_FILE']))['riverUserValidUser']" \
             || { echo "::error::CREDENTIALS_JSON is not valid JSON or has no riverUserValidUser"; exit 1; }
 
+      # The DMS download fails now and then (25 and 26-Oct-2026), so try up to 3 times.
       - name: Build the ASM-wise summary
-        run: python asm-report/asmwise_report.py
+        run: |
+          for attempt in 1 2 3; do
+            python asm-report/asmwise_report.py && exit 0
+            echo "::warning::Build attempt $attempt failed"
+            [ "$attempt" -lt 3 ] && sleep 120
+          done
+          exit 1
 
       # Only these ASMs for now, with ramkishor@, hemanthkr@ and ashishg@ on Cc; drop ASMS to mail every ASM in the mapping.
       - name: Email the ASMs (${{ env.MODE }})
@@ -73,9 +123,9 @@ jobs:
           ASMS=(--asm Santhosh "Narendra Thota" Dinith Akram)
           CC=(--cc ramkishor@rideriver.com hemanthkr@rideriver.com ashishg@rideriver.com)
           case "$MODE" in
-            send)    python asm-report/asm_email.py --send "${ASMS[@]}" "${CC[@]}" ;;
-            test)    python asm-report/asm_email.py --send --test-to "$GMAIL_TO" "${ASMS[@]}" ;;
-            *)       python asm-report/asm_email.py "${ASMS[@]}" ;;
+            send|auto) python asm-report/asm_email.py --send "${ASMS[@]}" "${CC[@]}" ;;
+            test)      python asm-report/asm_email.py --send --test-to "$GMAIL_TO" "${ASMS[@]}" ;;
+            *)         python asm-report/asm_email.py "${ASMS[@]}" ;;
           esac
 
       # The summary holds counts only; the previews hold the ASM emails as sent.
