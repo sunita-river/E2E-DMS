@@ -1,7 +1,9 @@
 name: DMS Automation
 
 # These jobs log into the live DMS and build full reports (GSTR takes ~1 hour), so they run on
-# demand or on a schedule - not on every push.
+# demand or on a schedule - not on every push. GitHub's own schedule skips many runs, so the Scheduler
+# workflow (scheduler.yml) starts the 07:00 run; the cron is only a backup and does nothing while a
+# Scheduler run is going.
 on:
   workflow_dispatch:
     inputs:
@@ -13,8 +15,34 @@ on:
   schedule:
     - cron: '30 1 * * *'   # every day 07:00 IST
 
+permissions:
+  contents: read
+  actions: read     # the Scheduler check
+
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          go=true
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            clock=$(gh run list -R "$GITHUB_REPOSITORY" --workflow scheduler.yml --limit 10 --json status               --jq '[.[] | select(.status != "completed")] | length' || echo 0)
+            if [ "$clock" != "0" ]; then
+              go=false
+              echo "The Scheduler is going and starts today's run itself, nothing to do."
+            fi
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+
   dms:
+    needs: check
+    if: needs.check.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:

@@ -5,7 +5,8 @@ name: ASM-wise Report
 # hand (Actions -> ASM-wise Report -> Run workflow) to preview or to send a test copy to GMAIL_TO.
 #
 # GitHub sometimes drops scheduled runs (on 27-Oct-2026 it skipped every one for the whole morning), so
-# the report is started several times: 07:47, 08:07, 08:22 and 08:37 IST here, plus the Apps Script trigger in
+# the report is started several times: 07:47 and 08:22 IST by the Scheduler workflow (scheduler.yml), which
+# GitHub does not skip, 07:47, 08:07, 08:22 and 08:37 IST here, plus the Apps Script trigger in
 # resources/apps-script/triggerAsmReport.gs (07:00-08:00 IST from Google). These "auto" runs mail the ASMs
 # only between 08:00 and 09:00 IST (a run that is ready early waits for 08:00; none mails after 09:00) and
 # only if no run has sent today's email yet, so the ASMs get it once.

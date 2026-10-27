@@ -1,0 +1,102 @@
+name: Scheduler
+
+# GitHub's own schedule skips many runs (on 26 and 27-Oct-2026 nearly all of them), so this workflow starts
+# the others at their times instead. Each Scheduler run waits for the next time in the timetable below,
+# starts the workflows due then (workflow_dispatch, which GitHub does not skip) and starts the next Scheduler
+# run for the time after. A wait longer than 5h20m (GitHub stops a job at 6 h) is split over two runs.
+# So one Scheduler run is always going; that is expected.
+# The hourly cron only restarts the chain if it ever stops (a restart does nothing while a Scheduler run
+# is going). The other workflows keep their own crons as a backup; PDI and DMS Automation scheduled runs
+# do nothing while a Scheduler run is going, and the ASM report sends only once a day anyway.
+# To change a time, edit the timetable below (IST).
+run-name: Scheduler ${{ github.event.inputs.label || 'restart' }}
+on:
+  schedule:
+    - cron: '13 * * * *'   # hourly at :43 IST, restarts the chain only if it has stopped
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: 'Set by the Scheduler itself; leave blank to start it'
+        required: false
+        default: ''
+      label:
+        description: 'Set by the Scheduler itself'
+        required: false
+        default: ''
+
+permissions:
+  actions: write    # starting the workflows and the next Scheduler run
+
+jobs:
+  clock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    env:
+      TZ: Asia/Kolkata
+      GH_TOKEN: ${{ github.token }}
+      SLOT: ${{ github.event.inputs.slot }}
+    steps:
+      - name: Wait for the next time and start what is due
+        run: |
+          # IST time, workflow file, its inputs
+          timetable='
+          07:00 playwright.yml suite=all
+          07:47 asmwise-report.yml mode=auto
+          07:47 pdi.yml task=pdi
+          08:22 asmwise-report.yml mode=auto
+          08:47 pdi.yml task=pdi
+          09:47 pdi.yml task=pdi
+          10:47 pdi.yml task=pdi
+          11:47 pdi.yml task=pdi
+          12:47 pdi.yml task=pdi
+          13:47 pdi.yml task=pdi
+          14:47 pdi.yml task=pdi
+          15:47 pdi.yml task=pdi
+          16:47 pdi.yml task=pdi
+          17:47 pdi.yml task=pdi
+          19:17 pdi.yml task=daily-email
+          '
+
+          # A run started by hand or by the cron is only a restart: one chain at a time.
+          if [ -z "$SLOT" ]; then
+            others=$(gh run list -R "$GITHUB_REPOSITORY" --workflow scheduler.yml --limit 10 --json databaseId,status \
+              --jq "[.[] | select(.databaseId != $GITHUB_RUN_ID and .status != \"completed\")] | length")
+            [ "$others" != "0" ] && { echo "The Scheduler is already going, nothing to do."; exit 0; }
+          fi
+
+          # First timetable time after the given time (epoch seconds).
+          next_slot() {
+            for d in 0 1; do
+              day=$(date -d "$(date -d "@$1" +%F) +$d day" +%F)
+              for t in $(echo "$timetable" | awk 'NF {print $1}' | sort -u); do
+                s=$(date -d "$day $t" +%s)
+                [ "$s" -gt "$1" ] && { echo "$s"; return; }
+              done
+            done
+          }
+
+          slot=${SLOT:-$(next_slot "$(date +%s)")}
+          left=$(( slot - $(date +%s) ))
+          if [ "$left" -gt 19200 ]; then
+            echo "Next time $(date -d "@$slot" '+%d-%m %H:%M') IST is more than 5h20m away, handing over in 5h20m."
+            sleep 19200
+            next=$slot
+          else
+            if [ "$left" -gt 0 ]; then
+              echo "Next time $(date -d "@$slot" '+%d-%m %H:%M') IST, waiting $(( left / 60 )) min."
+              sleep "$left"
+            fi
+            t=$(date -d "@$slot" +%H:%M)
+            echo "$timetable" | awk -v t="$t" '$1 == t {print $2, $3}' | while read -r wf inputs; do
+              if gh workflow run "$wf" -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f "$inputs"; then
+                echo "Started $wf ($inputs)"
+              else
+                echo "::error::Could not start $wf ($inputs)"
+              fi
+            done
+            next=$(next_slot "$slot")
+          fi
+
+          gh workflow run scheduler.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f slot="$next" -f label="for $(date -d "@$next" '+%d-%m %H:%M') IST"
+          echo "Next Scheduler run is for $(date -d "@$next" '+%d-%m %H:%M') IST."
