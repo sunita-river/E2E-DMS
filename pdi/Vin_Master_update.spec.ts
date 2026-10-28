@@ -52,12 +52,12 @@ const PROGRESS_FILE = path.join(MASTER_DIR, `VIN_Master_progress${DRY_RUN ? '_DR
 const RETRY = /^(Error|Not attempted)|Show did not load|must be unique/i;
 const UNIQUE = /must be unique/i;
 
-type Outcome = 'Changed' | 'Partly changed' | 'Already correct' | 'Dry run' | 'Sheet has no usable value' | 'Not found in DMS' | 'Refused by DMS' | 'Error';
+type Outcome = 'Changed' | 'Corrected, sheet value missing' | 'Already correct' | 'Dry run' | 'Sheet has no usable value' | 'Not found in DMS' | 'Refused by DMS' | 'Error';
 function outcomeOf(status: string): Outcome {
   if (/^Already correct/.test(status)) return 'Already correct';
   if (/^Updated/.test(status)) return 'Changed';
   if (/^Dry run|\(dry run\)/.test(status)) return 'Dry run';
-  if (/; the rest saved/.test(status)) return 'Partly changed';
+  if (/; the rest saved/.test(status)) return 'Corrected, sheet value missing';
   if (/^VIN sheet has no usable/.test(status)) return 'Sheet has no usable value';
   if (/Show did not load/.test(status)) return 'Not found in DMS';
   if (/^Save clicked but values not kept/.test(status)) return 'Refused by DMS';
@@ -109,7 +109,7 @@ function writeReport(): string {
     XLSX.utils.book_append_sheet(wb, ws, name);
   };
   const byOutcome = (...o: Outcome[]) => rows.filter((r) => o.includes(outcomeOf(r.Status || '')));
-  add('Changed', byOutcome('Changed', 'Partly changed', 'Dry run'));
+  add('Changed', byOutcome('Changed', 'Corrected, sheet value missing', 'Dry run'));
   add('Problems', byOutcome('Sheet has no usable value', 'Not found in DMS', 'Refused by DMS', 'Error'));
   add('All', rows);
   const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');

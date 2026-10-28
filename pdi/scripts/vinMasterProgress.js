@@ -34,7 +34,7 @@ function outcomeOf(status) {
   if (/^Already correct/.test(status)) return 'Already correct';
   if (/^Updated/.test(status)) return 'Changed';
   if (/^Dry run|\(dry run\)/.test(status)) return 'Dry run';
-  if (/; the rest saved/.test(status)) return 'Partly changed';
+  if (/; the rest saved/.test(status)) return 'Corrected, sheet value missing';
   if (/^VIN sheet has no usable/.test(status)) return 'Sheet has no usable value';
   if (/Show did not load/.test(status)) return 'Not found in DMS';
   if (/^Save clicked but values not kept/.test(status)) return 'Refused by DMS';
@@ -83,7 +83,7 @@ function build() {
   }
   const bars = [...buckets.entries()].sort((a, b) => a[0] - b[0]);
 
-  const changed = rows.filter((r) => ['Changed', 'Partly changed'].includes(outcomeOf(r.Status || ''))).sort((a, b) => parseAt(b.At) - parseAt(a.At));
+  const changed = rows.filter((r) => ['Changed', 'Corrected, sheet value missing'].includes(outcomeOf(r.Status || ''))).sort((a, b) => parseAt(b.At) - parseAt(a.At));
   const problems = rows.filter((r) => ['Refused by DMS', 'Not found in DMS', 'Error'].includes(outcomeOf(r.Status || '')));
 
   return { sheetVins, checked, done, remaining, pct, counts, perSec, running, eta, last, bars, changed, problems, now };
