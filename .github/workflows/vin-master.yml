@@ -6,7 +6,7 @@ name: VIN master
 # which puts todo/chunk-<i>.txt on the vin-master-runs branch. One job per chunk, each running
 # pdi/Vin_Master_update.spec.ts headless with VIN_LIST set to its chunk, sends its progress file back to
 # results/chunk-<i>.jsonl on that branch every 5 minutes and at the end; the PC takes them with --merge.
-run-name: VIN master (${{ github.event.inputs.sessions }} sessions per job)
+run-name: VIN master (chunks ${{ github.event.inputs.chunks || 'all' }}, ${{ github.event.inputs.sessions }} sessions per job)
 on:
   workflow_dispatch:
     inputs:
@@ -15,6 +15,10 @@ on:
         type: choice
         options: ['2', '3', '4']
         default: '3'
+      chunks:
+        description: 'Only these chunks, comma-separated, e.g. 1,2 (blank = all)'
+        required: false
+        default: ''
 
 permissions:
   contents: write   # results go back to the vin-master-runs branch
@@ -28,10 +32,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - id: list
+        env:
+          ONLY: ${{ github.event.inputs.chunks }}
         run: |
           git fetch --depth=1 origin vin-master-runs \
             || { echo "::error::No vin-master-runs branch. Run vinMasterGitHub.js --split on the PC first."; exit 1; }
-          list=$(git ls-tree --name-only FETCH_HEAD todo/ | sed -n 's#^todo/chunk-\([0-9]*\)\.txt$#\1#p' | sort -n | jq -Rsc 'split("\n") | map(select(. != ""))')
+          list=$(git ls-tree --name-only FETCH_HEAD todo/ | sed -n 's#^todo/chunk-\([0-9]*\)\.txt$#\1#p' | sort -n \
+            | jq -Rsc --arg only "$ONLY" 'split("\n") | map(select(. != "")) as $all
+                | ($only | gsub(" "; "") | split(",") | map(select(. != ""))) as $want
+                | if ($want | length) == 0 then $all else $all | map(select(IN($want[]))) end')
           [ "$list" = "[]" ] && { echo "::error::No todo/chunk-*.txt on vin-master-runs."; exit 1; }
           echo "Chunks: $list"
           echo "list=$list" >> "$GITHUB_OUTPUT"
