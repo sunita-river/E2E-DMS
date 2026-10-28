@@ -5,7 +5,8 @@
 //       The VINs still to do (same rule as the spec: not checked yet, ended in a retry status, or the sheet has
 //       changed since) in sheet order: the first <n> stay on this PC (Output/VIN Master/VIN_Master_todo_pc.txt,
 //       run them with VIN_LIST set to that file), the rest go to the branch as todo/chunk-<i>.txt, one per job.
-//       Replaces the branch's todo lists and clears its old results.
+//       Replaces the branch's todo lists and clears its old results, so --merge first. --skip <file> leaves out
+//       the VINs in that file (e.g. the PC's list while the PC is still running it).
 //   node "pdi/scripts/vinMasterGitHub.js" --merge
 //       Adds the results the GitHub jobs sent (results/chunk-<i>.jsonl) to this PC's progress file. Lines already
 //       there are skipped, so merging again is harmless; the spec reads the latest line per VIN.
@@ -96,9 +97,11 @@ function commit(parent, files, message) {
   }
 }
 
-function split(jobs, keep) {
+function split(jobs, keep, skipFile) {
   const progress = readProgress();
+  const skip = new Set(skipFile ? fs.readFileSync(skipFile, 'utf8').split(/\s+/).filter(Boolean) : []);
   const todo = readSheet().filter((d) => {
+    if (skip.has(d.vin)) return false;
     const r = progress.get(d.vin);
     return !r || RETRY.test(r.Status || '') || r.SheetMotor !== d.motor || r.SheetBattery !== d.battery || r.SheetCharger !== d.charger;
   }).map((d) => d.vin);
@@ -149,8 +152,8 @@ if (require.main === module) {
   if (process.argv.includes('--split')) {
     const jobs = Number(arg('--split'));
     const keep = Number(arg('--keep') || 0);
-    if (!Number.isInteger(jobs) || jobs < 1 || !Number.isInteger(keep) || keep < 0) throw new Error('Usage: --split <jobs> --keep <VINs for this PC>');
-    split(jobs, keep);
+    if (!Number.isInteger(jobs) || jobs < 1 || !Number.isInteger(keep) || keep < 0) throw new Error('Usage: --split <jobs> --keep <VINs for this PC> [--skip <file of VINs>]');
+    split(jobs, keep, arg('--skip'));
   } else if (process.argv.includes('--merge')) {
     merge();
   } else {
