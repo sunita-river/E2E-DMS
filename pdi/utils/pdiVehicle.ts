@@ -28,7 +28,12 @@ export const VIN_FIELDS: { field: string; key: keyof VinDetails; label: string }
 // A real serial has a run of 4+ digits and no spaces. About 7% of VIN-sheet cells hold a note instead
 // ("CHARGER NOT ASSIGNED YET", "BIN SERIAL DUPLICATION\nCONTACT FACTORY TEAM", "BEFIS3000395 : 480 W",
 // "VARIANTMISMATCHG1", which a single digit let through on 28-Oct-2026) or are empty; those must never be typed into the DMS.
-export const isSerial = (v: string) => !!v && !/\s/.test(v) && /\d{4}/.test(v);
+// Fields the DMS keeps unique across vehicles, and its message when a Save would break that.
+const UNIQUE_FIELDS = [
+  { field: 'VehicleChargerNo', label: 'charger', refused: /Charger No must be unique/i },
+  { field: 'BatteryDetails', label: 'battery', refused: /Battery No must be unique/i },
+];
+export const isSerial =(v: string) => !!v && !/\s/.test(v) && /\d{4}/.test(v);
 
 // VIN Details sheet columns are found by their header text in row 1, never by position. On 1-Oct-2026 the
 // sheet's Battery and Motor columns were swapped and 41 chassis got Engine No and Battery the wrong way round.
@@ -189,24 +194,33 @@ export async function updateVehicles(page: Page, loginPage: LoginPage, dealer: U
     await identifierInput.waitFor({ timeout: 60000 });
   };
 
-  // "Vehicle Charger No must be unique": another vehicle still holds the sheet's charger, often because the two
-  // have each other's. The vehicle on screen (re-opened after the refused Save) gets its old charger with a
-  // trailing "." (the other fields as filled), which frees that number for the vehicle that should have it; a
-  // later pass (the run's second pass, or the next run) then gives this one its own. Returns a note for the Status.
-  const freeCharger = async (chassis: string, filled: [field: string, value: string][]): Promise<string> => {
+  // "Vehicle Charger No / Battery No must be unique": another vehicle still holds the sheet's number, often
+  // because the two have each other's. The vehicle on screen (re-opened after the refused Save) gets its old
+  // number with a trailing "." (the other fields as filled), which frees it for the vehicle that should have it;
+  // a later pass (the run's second pass, or the next run) then gives this one its own. Returns a note for the Status.
+  const freeOldNumbers = async (chassis: string, filled: [field: string, value: string][], saveMessage: string): Promise<string> => {
     if (dryRun) return '';
-    const old = await fieldValue('VehicleChargerNo');
-    if (old.endsWith('.') || !isSerial(old)) return '';
-    const placeholder = `${old}.`;
+    const placeholders = new Map<string, string>();
+    for (const u of UNIQUE_FIELDS) {
+      if (!u.refused.test(saveMessage)) continue;
+      const old = await fieldValue(u.field);
+      if (!old.endsWith('.') && isSerial(old)) placeholders.set(u.field, `${old}.`);
+    }
+    if (!placeholders.size) return '';
     for (const [field, value] of filled) {
-      await page.locator(`[name="ctl00$cpMain$${field}"]`).fill(field === 'VehicleChargerNo' ? placeholder : value);
+      await page.locator(`[name="ctl00$cpMain$${field}"]`).fill(placeholders.get(field) ?? value);
     }
     await page.locator('[name="ctl00$cpMain$EditChassisReason"]').fill(editReason());
     lastDialog = '';
     await postBack('#ctl00_cpMain_cmdSave');
     await showVehicle(chassis);
-    const now = await fieldValue('VehicleChargerNo');
-    return now === placeholder ? `; old charger freed: set to "${placeholder}"` : `; could not free the old charger (DMS has "${now}")`;
+    const notes: string[] = [];
+    for (const [field, placeholder] of placeholders) {
+      const label = UNIQUE_FIELDS.find((u) => u.field === field)!.label;
+      const now = await fieldValue(field);
+      notes.push(now === placeholder ? `old ${label} freed: set to "${placeholder}"` : `could not free the old ${label} (DMS has "${now}")`);
+    }
+    return `; ${notes.join('; ')}`;
   };
 
   // One attempt at a chassis; returns its Status. Throws on a page error (timeouts etc.).
@@ -269,7 +283,7 @@ export async function updateVehicles(page: Page, loginPage: LoginPage, dealer: U
     }
     const suffix = saveMessage ? ` (${saveMessage})` : '';
     if (notKept.length) {
-      const freed = /Charger No must be unique/i.test(saveMessage) ? await freeCharger(chassis, filled) : '';
+      const freed = await freeOldNumbers(chassis, filled, saveMessage);
       return `Save clicked but values not kept: ${notKept.join('; ')}${suffix}${freed}`;
     }
     return noteText ? `${noteText}; the rest saved${suffix}` : `Updated${suffix}`;
