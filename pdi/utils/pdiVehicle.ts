@@ -189,6 +189,26 @@ export async function updateVehicles(page: Page, loginPage: LoginPage, dealer: U
     await identifierInput.waitFor({ timeout: 60000 });
   };
 
+  // "Vehicle Charger No must be unique": another vehicle still holds the sheet's charger, often because the two
+  // have each other's. The vehicle on screen (re-opened after the refused Save) gets its old charger with a
+  // trailing "." (the other fields as filled), which frees that number for the vehicle that should have it; a
+  // later pass (the run's second pass, or the next run) then gives this one its own. Returns a note for the Status.
+  const freeCharger = async (chassis: string, filled: [field: string, value: string][]): Promise<string> => {
+    if (dryRun) return '';
+    const old = await fieldValue('VehicleChargerNo');
+    if (old.endsWith('.') || !isSerial(old)) return '';
+    const placeholder = `${old}.`;
+    for (const [field, value] of filled) {
+      await page.locator(`[name="ctl00$cpMain$${field}"]`).fill(field === 'VehicleChargerNo' ? placeholder : value);
+    }
+    await page.locator('[name="ctl00$cpMain$EditChassisReason"]').fill(editReason());
+    lastDialog = '';
+    await postBack('#ctl00_cpMain_cmdSave');
+    await showVehicle(chassis);
+    const now = await fieldValue('VehicleChargerNo');
+    return now === placeholder ? `; old charger freed: set to "${placeholder}"` : `; could not free the old charger (DMS has "${now}")`;
+  };
+
   // One attempt at a chassis; returns its Status. Throws on a page error (timeouts etc.).
   const updateChassis = async (row: ResultRow, details: VinDetails): Promise<string> => {
     const chassis = row.ChassisNo!;
@@ -248,7 +268,10 @@ export async function updateVehicles(page: Page, loginPage: LoginPage, dealer: U
       if (now !== value) notKept.push(`${VIN_FIELDS.find((f) => f.field === field)!.label}: DMS has "${now}"`);
     }
     const suffix = saveMessage ? ` (${saveMessage})` : '';
-    if (notKept.length) return `Save clicked but values not kept: ${notKept.join('; ')}${suffix}`;
+    if (notKept.length) {
+      const freed = /Charger No must be unique/i.test(saveMessage) ? await freeCharger(chassis, filled) : '';
+      return `Save clicked but values not kept: ${notKept.join('; ')}${suffix}${freed}`;
+    }
     return noteText ? `${noteText}; the rest saved${suffix}` : `Updated${suffix}`;
   };
 

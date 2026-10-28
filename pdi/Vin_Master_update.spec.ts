@@ -17,6 +17,8 @@ import { loadVinDetails, updateVehicles, isSerial, ResultRow, Log } from './util
 //   - a sheet note ("CHARGER NOT ASSIGNED YET ...") or empty cell is never typed; that DMS field is left as it is
 // A Save the DMS refuses because another VIN still holds the number ("must be unique", e.g. two vehicles with
 // each other's charger) is tried once more after the full pass, when the first pass has usually freed it.
+// For a charger, the refused VIN's old charger gets a trailing "." (BEEIT3032450 -> BEEIT3032450.) so the VIN
+// that should have that number can take it; the "." stays only if that VIN is never corrected.
 //
 // Every finished VIN goes to a progress file straight away, so a run that stops (PC asleep, DMS down) carries on
 // where it stopped when started again; VINs that ended in an error are tried again. The result workbook is
