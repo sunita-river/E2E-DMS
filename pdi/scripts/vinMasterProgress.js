@@ -5,8 +5,9 @@
 //   node "pdi/scripts/vinMasterProgress.js" --watch   rewrite it every minute until stopped (Ctrl+C)
 //   add --merge to first take the GitHub jobs' results (vinMasterGitHub.js --merge) each time
 //
-// Each VIN counts once, by its latest result, as the spec's own report does; DMS refusals and pages that
-// did not load are retried by the next run, so they count as problems, not done.
+// Each VIN counts once, by its latest result, as the spec's own report does. A VIN is done once it has a
+// result; DMS refusals and pages that did not load are also listed as problems (the next run retries them).
+// The page lists only the latest PROBLEM_ROWS problems; VIN_Master_Not_Saved_*.xlsx has them all.
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -16,6 +17,7 @@ const PROGRESS_FILE = path.join(MASTER_DIR, 'VIN_Master_progress.jsonl');
 const VIN_FILE = process.env.PDI_VIN_FILE || path.join(ROOT, 'resources', 'VIN_Details.csv');
 const PAGE = path.join(MASTER_DIR, 'VIN_Master_Progress.html');
 const BUCKET_MIN = 10;
+const PROBLEM_ROWS = 200;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const fmt = (n) => n.toLocaleString('en-IN');
@@ -57,9 +59,8 @@ function build() {
   const rows = [...latest.values()];
   const counts = {};
   for (const r of rows) counts[outcomeOf(r.Status || '')] = (counts[outcomeOf(r.Status || '')] || 0) + 1;
-  const problemsN = (counts['Refused by DMS'] || 0) + (counts['Not found in DMS'] || 0) + (counts.Error || 0);
   const checked = rows.length;
-  const done = checked - problemsN;
+  const done = checked;
   const remaining = Math.max(sheetVins - done, 0);
   const pct = sheetVins ? (done / sheetVins) * 100 : 0;
 
@@ -84,7 +85,8 @@ function build() {
   const bars = [...buckets.entries()].sort((a, b) => a[0] - b[0]);
 
   const changed = rows.filter((r) => ['Changed', 'Corrected, sheet value missing'].includes(outcomeOf(r.Status || ''))).sort((a, b) => parseAt(b.At) - parseAt(a.At));
-  const problems = rows.filter((r) => ['Refused by DMS', 'Not found in DMS', 'Error'].includes(outcomeOf(r.Status || '')));
+  const problems = rows.filter((r) => ['Refused by DMS', 'Not found in DMS', 'Error'].includes(outcomeOf(r.Status || '')))
+    .sort((a, b) => parseAt(b.At) - parseAt(a.At));
 
   return { sheetVins, checked, done, remaining, pct, counts, perSec, running, eta, last, bars, changed, problems, now };
 }
@@ -127,7 +129,7 @@ function render(s) {
       const before = r[`Before${f}`] || '', after = r[f] || '';
       return before.toUpperCase() === after.toUpperCase() ? `<td class="mono muted">${esc(after)}</td>` : `<td class="mono"><s>${esc(before) || '(blank)'}</s> → <b>${esc(after)}</b></td>`;
     }).join('') + '</tr>').join('');
-  const problemRows = s.problems.map((r) => `<tr><td class="mono">${esc(r.ChassisNo)}</td><td>${esc(outcomeOf(r.Status))}</td><td class="msg">${esc(r.Status)}</td></tr>`).join('');
+  const problemRows = s.problems.slice(0, PROBLEM_ROWS).map((r) => `<tr><td class="mono">${esc(r.ChassisNo)}</td><td>${esc(outcomeOf(r.Status))}</td><td class="msg">${esc(r.Status)}</td></tr>`).join('');
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -188,7 +190,8 @@ s { color:var(--muted); }
 <div class="card scroll">${s.changed.length ? `<table><tr><th>Saved at</th><th>Chassis No</th><th>Changed</th><th>Engine No</th><th>Battery</th><th>Charger</th></tr>${changedRows}</table>` : '<p class="muted">None yet.</p>'}</div>
 
 <h2>Problems to fix in DMS (${fmt(s.problems.length)})</h2>
-<div class="card scroll">${s.problems.length ? `<table><tr><th>Chassis No</th><th>Result</th><th>DMS message</th></tr>${problemRows}</table>` : '<p class="muted">None.</p>'}</div>
+<div class="card scroll">${s.problems.length ? `<table><tr><th>Chassis No</th><th>Result</th><th>DMS message</th></tr>${problemRows}</table>` +
+  (s.problems.length > PROBLEM_ROWS ? `<p class="muted">Latest ${PROBLEM_ROWS} shown; all ${fmt(s.problems.length)} are in VIN_Master_Not_Saved_&lt;date&gt;.xlsx.</p>` : '') : '<p class="muted">None.</p>'}</div>
 </main></body></html>`;
 }
 
