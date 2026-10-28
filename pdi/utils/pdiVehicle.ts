@@ -25,10 +25,10 @@ export const VIN_FIELDS: { field: string; key: keyof VinDetails; label: string }
   { field: 'BatteryDetails', key: 'battery', label: 'Battery' },
   { field: 'VehicleChargerNo', key: 'charger', label: 'Charger' },
 ];
-// A real serial has digits and no spaces. About 7% of VIN-sheet cells hold a note instead
-// ("CHARGER NOT ASSIGNED YET", "BIN SERIAL DUPLICATION\nCONTACT FACTORY TEAM", "BEFIS3000395 : 480 W")
-// or are empty; those must never be typed into the DMS.
-export const isSerial = (v: string) => !!v && !/\s/.test(v) && /\d/.test(v);
+// A real serial has a run of 4+ digits and no spaces. About 7% of VIN-sheet cells hold a note instead
+// ("CHARGER NOT ASSIGNED YET", "BIN SERIAL DUPLICATION\nCONTACT FACTORY TEAM", "BEFIS3000395 : 480 W",
+// "VARIANTMISMATCHG1", which a single digit let through on 28-Oct-2026) or are empty; those must never be typed into the DMS.
+export const isSerial = (v: string) => !!v && !/\s/.test(v) && /\d{4}/.test(v);
 
 // VIN Details sheet columns are found by their header text in row 1, never by position. On 1-Oct-2026 the
 // sheet's Battery and Motor columns were swapped and 41 chassis got Engine No and Battery the wrong way round.
