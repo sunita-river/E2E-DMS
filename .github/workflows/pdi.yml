@@ -8,9 +8,10 @@ name: PDI
 # on the vin-data branch, and each run reads that file. The team only has to keep the sheet up to date.
 #   - hourly 07:47-17:47 IST: fill and Save as River User from Inventory Stock Details (no email)
 #   - daily 19:17 IST: the day's one PDI email, covering all of that day's runs
-# GitHub's own schedule skips many runs (whole days in Oct 2026), so the Scheduler workflow
-# (scheduler.yml) starts these runs at those times. The crons below are only a backup: a scheduled run
-# does nothing while a Scheduler run is going.
+# GitHub's own schedule skips many runs (whole days in Oct 2026), so cron-job.org starts these runs
+# (workflow_dispatch through the GitHub API, task=pdi hourly and task=daily-email at 19:17). The crons
+# below are only a backup: a scheduled run does nothing if cron-job.org started the same task in the
+# last hour.
 run-name: PDI ${{ github.event.inputs.task || (github.event.schedule == '47 13 * * *' && 'daily-email (scheduled)') || 'pdi (scheduled)' }}
 on:
   schedule:
@@ -30,10 +31,10 @@ on:
 
 permissions:
   contents: write   # pdiSync.js sends the shared PDI results to the pdi-runs branch
-  actions: read     # the Scheduler check and the daily email's wait for other PDI runs
+  actions: read     # the cron-job.org check and the daily email's wait for other PDI runs
 
 jobs:
-  # A scheduled run does nothing while the Scheduler is going: the Scheduler starts this slot's run.
+  # A scheduled run does nothing if cron-job.org started the same task (run name "PDI <task>") in the last hour.
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -43,14 +44,16 @@ jobs:
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          TASK: ${{ github.event.schedule == '47 13 * * *' && 'daily-email' || 'pdi' }}
         run: |
           go=true
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
-            clock=$(gh run list -R "$GITHUB_REPOSITORY" --workflow scheduler.yml --limit 10 --json status \
-              --jq '[.[] | select(.status != "completed")] | length' || echo 0)
-            if [ "$clock" != "0" ]; then
+            started=$(gh run list -R "$GITHUB_REPOSITORY" --workflow pdi.yml --event workflow_dispatch --limit 20 \
+              --json displayTitle,createdAt \
+              --jq "[.[] | select(.displayTitle == \"PDI $TASK\" and now - (.createdAt | fromdateiso8601) < 3600)] | length" || echo 0)
+            if [ "$started" != "0" ]; then
               go=false
-              echo "The Scheduler is going and starts this slot's run itself, nothing to do."
+              echo "cron-job.org started a $TASK run in the last hour, nothing to do."
             fi
           fi
           echo "go=$go" >> "$GITHUB_OUTPUT"

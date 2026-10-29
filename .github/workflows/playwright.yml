@@ -1,9 +1,9 @@
 name: DMS Automation
 
 # These jobs log into the live DMS and build full reports (GSTR takes ~1 hour), so they run on
-# demand or on a schedule - not on every push. GitHub's own schedule skips many runs, so the Scheduler
-# workflow (scheduler.yml) starts the 07:00 run; the cron is only a backup and does nothing while a
-# Scheduler run is going.
+# demand or on a schedule - not on every push. GitHub's own schedule skips many runs, so cron-job.org
+# starts the 07:00 run (workflow_dispatch through the GitHub API); the cron is only a backup and does
+# nothing if a run was started that way in the last 6 hours.
 on:
   workflow_dispatch:
     inputs:
@@ -17,7 +17,7 @@ on:
 
 permissions:
   contents: read
-  actions: read     # the Scheduler check
+  actions: read     # the cron-job.org check
 
 jobs:
   check:
@@ -32,10 +32,11 @@ jobs:
         run: |
           go=true
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
-            clock=$(gh run list -R "$GITHUB_REPOSITORY" --workflow scheduler.yml --limit 10 --json status               --jq '[.[] | select(.status != "completed")] | length' || echo 0)
-            if [ "$clock" != "0" ]; then
+            started=$(gh run list -R "$GITHUB_REPOSITORY" --workflow playwright.yml --event workflow_dispatch --limit 10 \
+              --json createdAt --jq '[.[] | select(now - (.createdAt | fromdateiso8601) < 21600)] | length' || echo 0)
+            if [ "$started" != "0" ]; then
               go=false
-              echo "The Scheduler is going and starts today's run itself, nothing to do."
+              echo "cron-job.org started today's run, nothing to do."
             fi
           fi
           echo "go=$go" >> "$GITHUB_OUTPUT"
